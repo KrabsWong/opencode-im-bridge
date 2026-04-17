@@ -161,7 +161,6 @@ export class IMBridge {
         permissions: true,
         directMessaging: true,
       },
-      sessionStrategy: "latest",
       ...config,
     }
   }
@@ -739,8 +738,8 @@ export class IMBridge {
 
     let sessionId = this.sessionMappings.get(userId)?.sessionId
     
-    // Auto-select session if using latest strategy
-    if (!sessionId && this.config.sessionStrategy === "latest") {
+    // Auto-select the latest session if none is selected
+    if (!sessionId) {
       const sessions = await this.input.client.session.list()
       if (sessions.data?.[0]) {
         sessionId = sessions.data[0].id

@@ -124,11 +124,11 @@ opencode
     permissions?: boolean    // 启用权限请求
     directMessaging?: boolean // 启用直接消息
   }
-  
-  // 会话选择策略
-  sessionStrategy?: "latest" | "active" | "manual"
 }
 ```
+
+**会话自动选择机制：**
+当你使用 `/ask` 命令但没有通过 `/use` 选择会话时，系统会自动使用**最新的活动会话**（按更新时间排序的第一个会话）。建议先使用 `/sessions` 查看活动会话，然后使用 `/use <sessionId>` 选择特定会话。
 
 ## Telegram 命令
 

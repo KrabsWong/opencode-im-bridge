@@ -163,9 +163,6 @@ export interface BridgeConfig {
     /** Enable direct messaging to sessions */
     directMessaging?: boolean
   }
-  
-  /** Session selection strategy: "latest" | "active" | "manual" */
-  sessionStrategy?: "latest" | "active" | "manual"
 }
 
 /**
