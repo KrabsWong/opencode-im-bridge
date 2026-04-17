@@ -10,6 +10,112 @@ import { IMBridgeLogger } from "../core/bridge.js"
 // Adapter-level logger
 const adapterLogger = new IMBridgeLogger(".opencode/im-bridge-adapter.log")
 
+/**
+ * Convert Markdown to Telegram HTML subset
+ * Telegram supports: <b>, <i>, <u>, <s>, <a>, <code>, <pre>
+ */
+function markdownToTelegramHtml(markdown: string): string {
+  if (!markdown) return ""
+  
+  let html = markdown
+  
+  // Escape HTML special characters first (but not in code blocks)
+  // We'll handle code blocks separately
+  
+  // Store code blocks and inline code to protect them from other transformations
+  const codeBlocks: string[] = []
+  const inlineCodes: string[] = []
+  
+  // Extract code blocks (```...```)
+  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`
+    // Escape HTML in code block
+    const escapedCode = code
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+    codeBlocks.push(escapedCode)
+    return placeholder
+  })
+  
+  // Extract inline code (`...`)
+  html = html.replace(/`([^`]+)`/g, (match, code) => {
+    const placeholder = `\x00INLINECODE${inlineCodes.length}\x00`
+    // Escape HTML in inline code
+    const escapedCode = code
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+    inlineCodes.push(escapedCode)
+    return placeholder
+  })
+  
+  // Convert Markdown to HTML (order matters - longer patterns first)
+  
+  // Bold: **text** or __text__ → <b>text</b>
+  html = html.replace(/\*\*([^\*]+)\*\*/g, "<b>$1</b>")
+  html = html.replace(/__([^_]+)__/g, "<b>$1</b>")
+  
+  // Italic: *text* or _text_ → <i>text</i> (but not ** or __)
+  html = html.replace(/(?<!\*)\*(?!\*)([^\*]+)(?<!\*)\*(?!\*)/g, "<i>$1</i>")
+  html = html.replace(/(?<!_)_(?!_)([^_]+)(?<!_)_(?!_)/g, "<i>$1</i>")
+  
+  // Strikethrough: ~~text~~ → <s>text</s>
+  html = html.replace(/~~([^~]+)~~/g, "<s>$1</s>")
+  
+  // Links: [text](url) → <a href="url">text</a>
+  // Store links to protect them from HTML escaping
+  const links: string[] = []
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+    const placeholder = `\x00LINK${links.length}\x00`
+    links.push(`<a href="${url}">${text}</a>`)
+    return placeholder
+  })
+  
+  // Lists: - item or * item or 1. item → just add line breaks and keep symbols
+  // (Telegram doesn't have native list support, we'll keep it as plain text with formatting)
+  
+  // Headers: ### text → <b>text</b>
+  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
+  
+  // Blockquote: > text → <i>text</i>
+  html = html.replace(/^>\s+(.+)$/gm, "<i>$1</i>")
+  
+  // Escape remaining HTML special characters in normal text
+  html = html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+  
+  // Restore our already-converted tags
+  html = html
+    .replace(/&lt;b&gt;/g, "<b>")
+    .replace(/&lt;\/b&gt;/g, "</b>")
+    .replace(/&lt;i&gt;/g, "<i>")
+    .replace(/&lt;\/i&gt;/g, "</i>")
+    .replace(/&lt;s&gt;/g, "<s>")
+    .replace(/&lt;\/s&gt;/g, "</s>")
+    .replace(/&lt;u&gt;/g, "<u>")
+    .replace(/&lt;\/u&gt;/g, "</u>")
+  
+  // Restore links
+  links.forEach((link, i) => {
+    html = html.replace(`\x00LINK${i}\x00`, link)
+  })
+  
+  // Restore code blocks
+  codeBlocks.forEach((code, i) => {
+    html = html.replace(`\x00CODEBLOCK${i}\x00`, `<pre><code>${code}</code></pre>`)
+  })
+  
+  // Restore inline code
+  inlineCodes.forEach((code, i) => {
+    html = html.replace(`\x00INLINECODE${i}\x00`, `<code>${code}</code>`)
+  })
+  
+  return html
+}
+
 interface TelegramUpdate {
   update_id: number
   message?: {
@@ -124,9 +230,15 @@ export class TelegramAdapter implements IMAdapter {
   async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     adapterLogger.debug(`[TelegramAdapter] sendMessage called with text length: ${message.text.length}`)
     
+    // Convert Markdown to HTML if parseMode is html
+    let text = message.text
+    if (message.parseMode === "html") {
+      text = markdownToTelegramHtml(text)
+    }
+    
     const body: Record<string, unknown> = {
       chat_id: this.config.chatId,
-      text: message.text.substring(0, 4096), // Telegram limit
+      text: text.substring(0, 4096), // Telegram limit
     }
     
     // Parse mode
@@ -172,10 +284,16 @@ export class TelegramAdapter implements IMAdapter {
    * Edit an existing message
    */
   async editMessage(messageId: string, message: IMOutgoingMessage): Promise<void> {
+    // Convert Markdown to HTML if parseMode is html
+    let text = message.text
+    if (message.parseMode === "html") {
+      text = markdownToTelegramHtml(text)
+    }
+    
     const body: Record<string, unknown> = {
       chat_id: this.config.chatId,
       message_id: parseInt(messageId, 10),
-      text: message.text.substring(0, 4096),
+      text: text.substring(0, 4096),
     }
     
     if (message.parseMode === "markdown") {
