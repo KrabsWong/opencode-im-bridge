@@ -205,36 +205,10 @@ function escapeHtml(text: string): string {
 
 /**
  * Convert Markdown to Telegram HTML subset using marked library
- * If input already contains HTML tags, preserve them
+ * Preserves existing HTML tags while converting Markdown
  */
 function markdownToTelegramHtml(markdown: string): string {
   if (!markdown) return ""
-  
-  adapterLogger.debug(`[markdownToTelegramHtml] Input: ${markdown.slice(0, 100)}...`)
-  adapterLogger.debug(`[markdownToTelegramHtml] Contains HTML tags: ${containsHtmlTags(markdown)}`)
-  
-  // If text already contains HTML tags, assume it's pre-formatted HTML
-  // Just escape any raw < or > that are not part of tags
-  if (containsHtmlTags(markdown)) {
-    adapterLogger.debug(`[markdownToTelegramHtml] Skipping marked, preserving existing HTML`)
-    // Protect existing HTML tags while escaping raw < >
-    const protectedTags: string[] = []
-    let html = markdown.replace(/<\/?[a-z][^>]*?>/gi, (match) => {
-      const placeholder = `\x00HTMLTAG${protectedTags.length}\x00`
-      protectedTags.push(match)
-      return placeholder
-    })
-    
-    // Escape remaining < > 
-    html = escapeHtml(html)
-    
-    // Restore HTML tags
-    protectedTags.forEach((tag, i) => {
-      html = html.replace(`\x00HTMLTAG${i}\x00`, tag)
-    })
-    
-    return html
-  }
   
   // Extract tables first (marked doesn't have good table rendering for Telegram)
   let html = markdown
@@ -247,6 +221,19 @@ function markdownToTelegramHtml(markdown: string): string {
     return placeholder
   })
   
+  // Protect existing HTML tags (like <b>, <code>, etc.) from marked processing
+  const protectedTags: string[] = []
+  html = html.replace(/<\/?[a-z][^>]*?>/gi, (match) => {
+    // Only protect Telegram-supported tags
+    const isTelegramTag = /<(\/?)(b|i|u|s|a|code|pre|tg-spoiler)(\s|>)/i.test(match)
+    if (isTelegramTag) {
+      const placeholder = `\x00HTMLTAG${protectedTags.length}\x00`
+      protectedTags.push(match)
+      return placeholder
+    }
+    return match
+  })
+  
   // Configure marked with custom renderer
   const renderer = createTelegramRenderer()
   
@@ -256,11 +243,10 @@ function markdownToTelegramHtml(markdown: string): string {
     breaks: true
   })
   
-  // Parse markdown
+  // Parse markdown (converts **bold** to <b>bold</b>, etc.)
   let result: string = marked.parse(html) as string
   
   // Convert unsupported HTML tags to Telegram-compatible ones
-  // marked uses <strong> and <em> but Telegram needs <b> and <i>
   result = result
     .replace(/<strong>/g, "<b>")
     .replace(/<\/strong>/g, "</b>")
@@ -268,10 +254,14 @@ function markdownToTelegramHtml(markdown: string): string {
     .replace(/<\/em>/g, "</i>")
   
   // Remove <p> tags (Telegram doesn't support them)
-  // But preserve the content and line breaks
   result = result
     .replace(/<p>/g, "")
     .replace(/<\/p>\n?/g, "\n\n")
+  
+  // Restore protected HTML tags
+  protectedTags.forEach((tag, i) => {
+    result = result.replace(`\x00HTMLTAG${i}\x00`, tag)
+  })
   
   // Restore tables
   tables.forEach((table, i) => {
