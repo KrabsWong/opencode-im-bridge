@@ -49,19 +49,19 @@ opencode plugin add opencode-im-bridge
     ["opencode-im-bridge", {
       "platform": "telegram",
       "platformConfig": {
-        "botToken": "YOUR_BOT_TOKEN",
-        "chatId": "YOUR_CHAT_ID"
+        "botToken": "YOUR_BOT_TOKEN",      // 从 @BotFather 获取
+        "chatId": "YOUR_CHAT_ID"           // 你的 Telegram 用户 ID
       },
       "bridgeConfig": {
+        // 可选：管理员用户 ID 列表（为空表示允许所有用户）
         "adminUsers": ["YOUR_USER_ID"],
+        
+        // 可选：功能开关
         "features": {
-          "questions": true,
-          "permissions": true,
-          "statusQuery": true,
-          "directMessaging": true,
-          "autoStatus": true
-        },
-        "sessionStrategy": "latest"
+          "questions": true,        // 接收 AI 问题通知（默认：true）
+          "permissions": true,      // 接收权限请求通知（默认：true）
+          "directMessaging": true   // 允许通过 /ask 发送消息（默认：true）
+        }
       }
     }]
   ]
@@ -101,28 +101,48 @@ opencode
   }
   ```
 
-### 桥接配置
+### 桥接配置 (bridgeConfig)
 
 ```typescript
 {
-  // 管理员用户 ID 列表（为空表示允许所有）
+  /** 
+   * 管理员用户 ID 列表
+   * 只有这些用户可以使用 Bot 命令（/sessions, /ask 等）
+   * 为空数组或不设置则表示允许所有用户
+   */
   adminUsers?: string[]
   
-  // 允许的聊天 ID（为空表示允许所有）
+  /** 
+   * 允许的聊天/群组 ID 列表
+   * 只有这些聊天中的消息会被处理
+   * 为空数组或不设置则表示允许所有聊天
+   */
   allowedChats?: string[]
   
-  // 自定义消息模板
+  /** 
+   * 自定义消息模板
+   * 可以自定义 question、permission、help 消息的格式
+   */
   templates?: {
+    /** 问题通知模板 */
     question?: (info: QuestionInfo) => string
+    /** 权限请求模板 */
     permission?: (info: PermissionInfo) => string
+    /** 帮助信息模板 */
     help?: () => string
   }
   
-  // 功能开关
+  /** 
+   * 功能开关
+   * 控制插件的各项功能是否启用
+   */
   features?: {
-    questions?: boolean      // 启用问题通知
-    permissions?: boolean    // 启用权限请求
-    directMessaging?: boolean // 启用直接消息
+    /** 启用 AI 问题通知（当 AI 需要确认时推送消息） */
+    questions?: boolean
+    /** 启用权限请求通知（当 AI 需要权限时推送消息） */
+    permissions?: boolean
+    /** 启用直接消息（允许使用 /ask 命令向会话发送消息） */
+    directMessaging?: boolean
   }
 }
 ```
@@ -246,6 +266,8 @@ export class MyCustomAdapter implements IMAdapter {
 
 ### 自定义消息模板
 
+通过 templates 可以自定义各类消息的格式，支持 Markdown 语法：
+
 ```json
 {
   "templates": {
@@ -258,9 +280,15 @@ export class MyCustomAdapter implements IMAdapter {
 
 ### 多用户权限控制
 
+限制哪些用户可以使用 Bot，以及哪些群组可以接收通知：
+
 ```json
 {
+  // 允许使用 Bot 命令的用户 ID 列表
   "adminUsers": ["123456789", "987654321"],
+  
+  // 允许接收消息的聊天/群组 ID 列表
+  // 群组 ID 通常以 -100 开头
   "allowedChats": ["-1001234567890"]
 }
 ```
@@ -270,9 +298,9 @@ export class MyCustomAdapter implements IMAdapter {
 ```json
 {
   "features": {
-    "questions": true,        // 接收问题通知
-    "permissions": true,      // 接收权限请求
-    "directMessaging": true   // 允许直接发消息
+    "questions": true,        // 接收问题通知（AI 需要确认时推送）
+    "permissions": true,      // 接收权限请求（AI 需要权限时推送）
+    "directMessaging": true   // 允许直接发消息（/ask 命令）
   }
 }
 ```
