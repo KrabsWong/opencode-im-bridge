@@ -148,9 +148,11 @@ export interface BridgeConfig {
   
   /** Message templates */
   templates?: {
+    /** Question notification template */
     question?: (info: QuestionInfo) => string
+    /** Permission request template */
     permission?: (info: PermissionInfo) => string
-    welcome?: () => string
+    /** Help message template */
     help?: () => string
   }
 
