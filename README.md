@@ -49,24 +49,29 @@ opencode plugin add opencode-im-bridge
     ["opencode-im-bridge", {
       "platform": "telegram",
       "platformConfig": {
-        "botToken": "YOUR_BOT_TOKEN",      // 从 @BotFather 获取
-        "chatId": "YOUR_CHAT_ID"           // 你的 Telegram 用户 ID
+        "botToken": "YOUR_BOT_TOKEN",
+        "chatId": "YOUR_CHAT_ID"
       },
       "bridgeConfig": {
-        // 可选：管理员用户 ID 列表（为空表示允许所有用户）
         "adminUsers": ["YOUR_USER_ID"],
-        
-        // 可选：功能开关
         "features": {
-          "questions": true,        // 接收 AI 问题通知（默认：true）
-          "permissions": true,      // 接收权限请求通知（默认：true）
-          "directMessaging": true   // 允许通过 /ask 发送消息（默认：true）
+          "questions": true,
+          "permissions": true,
+          "directMessaging": true
         }
       }
     }]
   ]
 }
 ```
+
+**配置说明：**
+- `botToken`: 从 @BotFather 获取的 Bot Token
+- `chatId`: 你的 Telegram 用户 ID（可通过 @userinfobot 获取）
+- `adminUsers`: 可选，允许使用 Bot 的用户 ID 列表（为空表示允许所有用户）
+- `features.questions`: 接收 AI 问题通知（默认：true）
+- `features.permissions`: 接收权限请求通知（默认：true）
+- `features.directMessaging`: 允许通过 /ask 发送消息（默认：true）
 
 ### 4. 启动 OpenCode
 
@@ -84,12 +89,18 @@ opencode
 
 ```typescript
 {
-  botToken: string      // Bot Token from @BotFather
-  chatId: string        // Target chat ID (can be group chat)
-  webhookUrl?: string   // Optional: webhook URL
-  webhookPort?: number  // Optional: webhook server port
+  botToken: string
+  chatId: string
+  webhookUrl?: string
+  webhookPort?: number
 }
 ```
+
+**参数说明：**
+- `botToken`: Bot Token from @BotFather
+- `chatId`: Target chat ID (can be group chat)
+- `webhookUrl`: Optional, webhook URL
+- `webhookPort`: Optional, webhook server port
 
 **Webhook vs Long Polling**
 - 开发环境：默认使用 Long Polling，无需配置
@@ -105,47 +116,33 @@ opencode
 
 ```typescript
 {
-  /** 
-   * 管理员用户 ID 列表
-   * 只有这些用户可以使用 Bot 命令（/sessions, /ask 等）
-   * 为空数组或不设置则表示允许所有用户
-   */
   adminUsers?: string[]
-  
-  /** 
-   * 允许的聊天/群组 ID 列表
-   * 只有这些聊天中的消息会被处理
-   * 为空数组或不设置则表示允许所有聊天
-   */
   allowedChats?: string[]
-  
-  /** 
-   * 自定义消息模板
-   * 可以自定义 question、permission、help 消息的格式
-   */
   templates?: {
-    /** 问题通知模板 */
     question?: (info: QuestionInfo) => string
-    /** 权限请求模板 */
     permission?: (info: PermissionInfo) => string
-    /** 帮助信息模板 */
     help?: () => string
   }
-  
-  /** 
-   * 功能开关
-   * 控制插件的各项功能是否启用
-   */
   features?: {
-    /** 启用 AI 问题通知（当 AI 需要确认时推送消息） */
     questions?: boolean
-    /** 启用权限请求通知（当 AI 需要权限时推送消息） */
     permissions?: boolean
-    /** 启用直接消息（允许使用 /ask 命令向会话发送消息） */
     directMessaging?: boolean
   }
 }
 ```
+
+**配置项说明：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `adminUsers` | `string[]` | 管理员用户 ID 列表。只有这些用户可以使用 Bot 命令（/sessions, /ask 等）。为空数组或不设置则表示允许所有用户 |
+| `allowedChats` | `string[]` | 允许的聊天/群组 ID 列表。只有这些聊天中的消息会被处理。为空数组或不设置则表示允许所有聊天 |
+| `templates.question` | `function` | 自定义问题通知模板。接收 QuestionInfo 参数，返回字符串 |
+| `templates.permission` | `function` | 自定义权限请求模板。接收 PermissionInfo 参数，返回字符串 |
+| `templates.help` | `function` | 自定义帮助信息模板。无参数，返回字符串 |
+| `features.questions` | `boolean` | 启用 AI 问题通知（当 AI 需要确认时推送消息）。默认：`true` |
+| `features.permissions` | `boolean` | 启用权限请求通知（当 AI 需要权限时推送消息）。默认：`true` |
+| `features.directMessaging` | `boolean` | 启用直接消息（允许使用 /ask 命令向会话发送消息）。默认：`true` |
 
 **会话自动选择机制：**
 当你使用 `/ask` 命令但没有通过 `/use` 选择会话时，系统会自动使用**最新的活动会话**（按更新时间排序的第一个会话）。建议先使用 `/sessions` 查看活动会话，然后使用 `/use <sessionId>` 选择特定会话。
@@ -278,32 +275,42 @@ export class MyCustomAdapter implements IMAdapter {
 }
 ```
 
+**模板说明：**
+- `question`: 问题通知模板。参数 `info` 包含问题详情，如 `info.questions[0].header` 和 `info.questions[0].question`
+- `permission`: 权限请求模板。参数 `info` 包含权限信息，如 `info.permission`
+- `help`: 帮助信息模板。无参数
+
 ### 多用户权限控制
 
 限制哪些用户可以使用 Bot，以及哪些群组可以接收通知：
 
 ```json
 {
-  // 允许使用 Bot 命令的用户 ID 列表
   "adminUsers": ["123456789", "987654321"],
-  
-  // 允许接收消息的聊天/群组 ID 列表
-  // 群组 ID 通常以 -100 开头
   "allowedChats": ["-1001234567890"]
 }
 ```
+
+**说明：**
+- `adminUsers`: 允许使用 Bot 命令的用户 ID 列表
+- `allowedChats`: 允许接收消息的聊天/群组 ID 列表，群组 ID 通常以 `-100` 开头
 
 ### 功能开关
 
 ```json
 {
   "features": {
-    "questions": true,        // 接收问题通知（AI 需要确认时推送）
-    "permissions": true,      // 接收权限请求（AI 需要权限时推送）
-    "directMessaging": true   // 允许直接发消息（/ask 命令）
+    "questions": true,
+    "permissions": true,
+    "directMessaging": true
   }
 }
 ```
+
+**说明：**
+- `questions`: 接收问题通知（AI 需要确认时推送）
+- `permissions`: 接收权限请求（AI 需要权限时推送）
+- `directMessaging`: 允许直接发消息（/ask 命令）
 
 ## 架构设计
 
