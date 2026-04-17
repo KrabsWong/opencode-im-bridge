@@ -186,10 +186,51 @@ function createTelegramRenderer() {
 }
 
 /**
+ * Check if text already contains HTML tags
+ */
+function containsHtmlTags(text: string): boolean {
+  // Match common HTML tags
+  return /<\/?[a-z][\s\S]*?>/i.test(text)
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+}
+
+/**
  * Convert Markdown to Telegram HTML subset using marked library
+ * If input already contains HTML tags, preserve them
  */
 function markdownToTelegramHtml(markdown: string): string {
   if (!markdown) return ""
+  
+  // If text already contains HTML tags, assume it's pre-formatted HTML
+  // Just escape any raw < or > that are not part of tags
+  if (containsHtmlTags(markdown)) {
+    // Protect existing HTML tags while escaping raw < >
+    const protectedTags: string[] = []
+    let html = markdown.replace(/<\/?[a-z][^>]*?>/gi, (match) => {
+      const placeholder = `\x00HTMLTAG${protectedTags.length}\x00`
+      protectedTags.push(match)
+      return placeholder
+    })
+    
+    // Escape remaining < > 
+    html = escapeHtml(html)
+    
+    // Restore HTML tags
+    protectedTags.forEach((tag, i) => {
+      html = html.replace(`\x00HTMLTAG${i}\x00`, tag)
+    })
+    
+    return html
+  }
   
   // Extract tables first (marked doesn't have good table rendering for Telegram)
   let html = markdown
