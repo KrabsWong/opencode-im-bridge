@@ -803,10 +803,22 @@ export class IMBridge {
 
     this.logger.info(`Question asked: ${info.id}`, { sessionId: info.sessionId })
 
+    // Fetch session info to display context
+    let sessionTitle = "未知会话"
+    let sessionDirectory = "未知目录"
+    try {
+      const sessionRes = await this.input.client.session.get({ path: { id: info.sessionId } })
+      const sessionData = sessionRes.data as any
+      sessionTitle = sessionData?.title || "未命名会话"
+      sessionDirectory = sessionData?.directory || "未知目录"
+    } catch (err) {
+      this.logger.warn(`Failed to fetch session info for ${info.sessionId}`, err)
+    }
+
     const template = this.config.templates?.question
     const text = template
       ? template(info)
-      : this.formatQuestionText(info)
+      : this.formatQuestionText(info, sessionTitle, sessionDirectory)
 
     // Build keyboard from options
     const keyboard = info.questions[0]?.options.map((opt) => [{
@@ -816,7 +828,7 @@ export class IMBridge {
 
     // Add reject button
     keyboard?.push([{
-      text: "[拒绝回答]",
+      text: "❌ 拒绝回答",
       callbackData: `reply:${info.id}:__reject__`,
     }])
 
@@ -846,13 +858,16 @@ export class IMBridge {
       this.logger.error("Error sending question", error)
     }
   }
-  
+
   /**
    * Format question text with HTML
    */
-  private formatQuestionText(info: QuestionInfo): string {
+  private formatQuestionText(info: QuestionInfo, sessionTitle: string, sessionDirectory: string): string {
     const q = info.questions[0]
-    let text = `<b>需要您的确认</b>\n━━━━━━━━━━━━━━━━━━━━\n`
+    let text = `<b>❓ 需要您的确认</b>\n━━━━━━━━━━━━━━━━━━━━\n`
+    text += `<b>来自会话:</b> ${this.escapeHtml(sessionTitle)}\n`
+    text += `<b>工作目录:</b> <code>${this.escapeHtml(sessionDirectory)}</code>\n`
+    text += `━━━━━━━━━━━━━━━━━━━━\n`
     text += `<b>${this.escapeHtml(q.header)}</b>\n\n`
     text += `${this.escapeHtml(q.question)}\n\n`
 
@@ -871,26 +886,38 @@ export class IMBridge {
    */
   async onPermissionAsked(info: PermissionInfo): Promise<void> {
     if (!this.config.features?.permissions) return
-    
+
+    // Fetch session info to display context
+    let sessionTitle = "未知会话"
+    let sessionDirectory = "未知目录"
+    try {
+      const sessionRes = await this.input.client.session.get({ path: { id: info.sessionId } })
+      const sessionData = sessionRes.data as any
+      sessionTitle = sessionData?.title || "未命名会话"
+      sessionDirectory = sessionData?.directory || "未知目录"
+    } catch (err) {
+      this.logger.warn(`Failed to fetch session info for ${info.sessionId}`, err)
+    }
+
     const template = this.config.templates?.permission
     const text = template
       ? template(info)
-      : this.formatPermissionText(info)
-    
+      : this.formatPermissionText(info, sessionTitle, sessionDirectory)
+
     const keyboard = [[
-      { text: "[允许一次]", callbackData: `permission:${info.id}:once` },
-      { text: "[总是允许]", callbackData: `permission:${info.id}:always` },
+      { text: "✅ 允许一次", callbackData: `permission:${info.id}:once` },
+      { text: "🔓 总是允许", callbackData: `permission:${info.id}:always` },
     ], [
-      { text: "[拒绝]", callbackData: `permission:${info.id}:reject` },
+      { text: "❌ 拒绝", callbackData: `permission:${info.id}:reject` },
     ]]
-    
+
     try {
       const result = await this.sendMessage({
         text,
         keyboard: { inline: keyboard },
         parseMode: "html",
       })
-      
+
       this.pendingRequests.set(info.id, {
         type: "permission",
         id: info.id,
@@ -904,14 +931,17 @@ export class IMBridge {
       this.logger.error("Error sending permission request", error)
     }
   }
-  
+
   /**
    * Format permission text with HTML
    */
-  private formatPermissionText(info: PermissionInfo): string {
-    let text = `<b>权限请求</b>\n━━━━━━━━━━━━━━━━━━━━\n`
-    text += `工具: <code>${info.permission}</code>\n`
-    text += `路径:\n`
+  private formatPermissionText(info: PermissionInfo, sessionTitle: string, sessionDirectory: string): string {
+    let text = `<b>🔒 权限请求</b>\n━━━━━━━━━━━━━━━━━━━━\n`
+    text += `<b>来自会话:</b> ${this.escapeHtml(sessionTitle)}\n`
+    text += `<b>工作目录:</b> <code>${this.escapeHtml(sessionDirectory)}</code>\n`
+    text += `━━━━━━━━━━━━━━━━━━━━\n`
+    text += `<b>请求工具:</b> <code>${info.permission}</code>\n`
+    text += `<b>路径:</b>\n`
     info.patterns.forEach((pattern, idx) => {
       text += `${idx + 1}. <code>${pattern}</code>\n`
     })
