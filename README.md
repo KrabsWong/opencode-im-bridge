@@ -7,6 +7,8 @@
 - **双向通信**: 从 IM 接收问题、发送回复，向 OpenCode 发送消息
 - **权限审批**: 在 IM 中审批 OpenCode 的权限请求
 - **会话管理**: 查看活动会话、切换会话、向指定会话发送消息
+- **AI 生成标题**: 一键让 AI 分析对话内容并自动生成合适的会话标题
+- **远程控制**: 通过 Telegram 按钮执行 OpenCode 内部命令（compact、interrupt、新建会话等）
 - **Markdown 渲染**: 自动将 Markdown 转换为 Telegram HTML，支持表格、代码块等
 - **多平台支持**: Telegram、Slack、Discord（可扩展）
 - **灵活配置**: 自定义消息模板、权限控制、功能开关
@@ -114,6 +116,7 @@ opencode
 | `/current` | 查看当前选中的会话 |
 | `/use <id>` | 选择特定会话 |
 | `/ask <message>` | 向当前会话发送消息 |
+| `/cmd` | 显示远程控制面板（compact/interrupt/新建会话/生成标题） |
 
 ## 工作流程
 
@@ -169,6 +172,29 @@ Telegram → OpenCode (session.prompt)
 消息加入会话上下文
     ↓
 AI 在下次回复时回答
+```
+
+### 场景 4: 远程控制与标题生成
+
+```
+用户: /cmd
+    ↓
+显示控制面板按钮
+    ↓
+用户点击「生成标题」
+    ↓
+向当前会话发送 system prompt
+    ↓
+AI 分析对话内容生成标题
+    ↓
+调用 PATCH /session/{id} 更新标题
+    ↓
+Telegram 回复：✅ 标题已更新为「xxx」
+
+其他控制按钮：
+- session_compact: 压缩会话历史
+- session_new: 新建会话
+- session_interrupt: 中断当前任务
 ```
 
 ## 自定义适配器
@@ -290,6 +316,8 @@ flowchart TB
 - [x] Telegram adapter
 - [x] Markdown to Telegram HTML conversion
 - [x] Markdown table support
+- [x] AI 自动生成会话标题
+- [x] 远程控制面板 (/cmd)
 - [ ] Slack adapter
 - [ ] Discord adapter
 - [ ] Message queue persistence
