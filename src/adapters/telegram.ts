@@ -6,6 +6,7 @@ import type {
   TelegramConfig
 } from "../types/index.js"
 import { IMBridgeLogger } from "../core/bridge.js"
+import { marked } from "marked"
 
 // Adapter-level logger
 const adapterLogger = new IMBridgeLogger(".opencode/im-bridge-adapter.log")
@@ -87,37 +88,113 @@ function markdownTableToTelegramPre(tableText: string): string {
 }
 
 /**
- * Convert Markdown to Telegram HTML subset
+ * Custom marked renderer for Telegram HTML subset
  * Telegram supports: <b>, <i>, <u>, <s>, <a>, <code>, <pre>
+ */
+function createTelegramRenderer() {
+  return {
+    // Space between tokens
+    space(): string {
+      return ''
+    },
+    
+    // Text styling
+    strong(text: string): string {
+      return `<b>${text}</b>`
+    },
+    
+    em(text: string): string {
+      return `<i>${text}</i>`
+    },
+    
+    del(text: string): string {
+      return `<s>${text}</s>`
+    },
+    
+    // Code
+    code(code: string, language?: string): string {
+      // Escape HTML in code
+      const escapedCode = code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+      return `<pre><code>${escapedCode}</code></pre>`
+    },
+    
+    codespan(code: string): string {
+      // Escape HTML in inline code
+      const escapedCode = code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+      return `<code>${escapedCode}</code>`
+    },
+    
+    // Links
+    link(href: string, title: string | null | undefined, text: string): string {
+      return `<a href="${href}">${text}</a>`
+    },
+    
+    // Paragraphs - just return text without <p> tags
+    paragraph(text: string): string {
+      return text + '\n\n'
+    },
+    
+    // Headings - use bold
+    heading(text: string, level: number): string {
+      return `<b>${text}</b>\n\n`
+    },
+    
+    // Blockquote - use italic
+    blockquote(quote: string): string {
+      return `<i>${quote.trim()}</i>\n\n`
+    },
+    
+    // Lists - Telegram doesn't support HTML lists, use text format
+    list(body: string, ordered: boolean): string {
+      return body + '\n'
+    },
+    
+    listitem(text: string): string {
+      return `• ${text.trim()}\n`
+    },
+    
+    // Horizontal rule
+    hr(): string {
+      return '─────────────────\n\n'
+    },
+    
+    // Line break
+    br(): string {
+      return '\n'
+    },
+    
+    // Tables - use custom format
+    table(header: string, body: string): string {
+      // Extract table content and convert to aligned format
+      return header + body
+    },
+    
+    tablerow(content: string): string {
+      return content
+    },
+    
+    tablecell(content: string, flags: { header: boolean; align: 'center' | 'left' | 'right' | null }): string {
+      return content + ' | '
+    }
+  }
+}
+
+/**
+ * Convert Markdown to Telegram HTML subset using marked library
  */
 function markdownToTelegramHtml(markdown: string): string {
   if (!markdown) return ""
   
+  // Extract tables first (marked doesn't have good table rendering for Telegram)
   let html = markdown
-  
-  // Escape HTML special characters first (but not in code blocks)
-  // We'll handle code blocks separately
-  
-  // Store code blocks and inline code to protect them from other transformations
-  const codeBlocks: string[] = []
-  const inlineCodes: string[] = []
   const tables: string[] = []
   
-  // Extract code blocks (```lang\ncode``` or ```\ncode```)
-  // Pattern: ``` followed by optional language identifier and newline, then content until ```
-  html = html.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
-    const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`
-    // Escape HTML in code block
-    const escapedCode = code
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-    codeBlocks.push(escapedCode)
-    return placeholder
-  })
-  
-  // Extract tables (| col1 | col2 |)
-  // Table pattern: line starting with |, at least one |, and optional separator line
   const tablePattern = /(\|[^\n]+\|\n\|[-:|\s]+\|\n(?:\|[^\n]+\|\n?)+)/g
   html = html.replace(tablePattern, (match) => {
     const placeholder = `\x00TABLE${tables.length}\x00`
@@ -125,89 +202,27 @@ function markdownToTelegramHtml(markdown: string): string {
     return placeholder
   })
   
-  // Extract inline code (`...`)
-  html = html.replace(/`([^`]+)`/g, (match, code) => {
-    const placeholder = `\x00INLINECODE${inlineCodes.length}\x00`
-    // Escape HTML in inline code
-    const escapedCode = code
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-    inlineCodes.push(escapedCode)
-    return placeholder
+  // Configure marked with custom renderer
+  const renderer = createTelegramRenderer()
+  
+  marked.setOptions({
+    renderer: renderer as any,
+    gfm: true,
+    breaks: true
   })
   
-  // Convert Markdown to HTML (order matters - longer patterns first)
+  // Parse markdown
+  let result = marked.parse(html) as string
   
-  // Bold: **text** or __text__ → <b>text</b>
-  html = html.replace(/\*\*([^\*]+)\*\*/g, "<b>$1</b>")
-  html = html.replace(/__([^_]+)__/g, "<b>$1</b>")
-  
-  // Italic: *text* or _text_ → <i>text</i>
-  // Process italic BEFORE bold to avoid conflicts
-  // Match single asterisk/underscore not surrounded by the same character
-  html = html.replace(/([^*]|^)\*([^*]+)\*([^*]|$)/g, "$1<i>$2</i>$3")
-  html = html.replace(/([^_]|^)_([^_]+)_([^_]|$)/g, "$1<i>$2</i>$3")
-  
-  // Strikethrough: ~~text~~ → <s>text</s>
-  html = html.replace(/~~([^~]+)~~/g, "<s>$1</s>")
-  
-  // Links: [text](url) → <a href="url">text</a>
-  // Store links to protect them from HTML escaping
-  const links: string[] = []
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    const placeholder = `\x00LINK${links.length}\x00`
-    links.push(`<a href="${url}">${text}</a>`)
-    return placeholder
-  })
-  
-  // Lists: - item or * item or 1. item → just add line breaks and keep symbols
-  // (Telegram doesn't have native list support, we'll keep it as plain text with formatting)
-  
-  // Headers: ### text → <b>text</b>
-  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
-  
-  // Blockquote: > text → <i>text</i>
-  html = html.replace(/^>\s+(.+)$/gm, "<i>$1</i>")
-  
-  // Escape remaining HTML special characters in normal text
-  html = html
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-  
-  // Restore our already-converted tags
-  html = html
-    .replace(/&lt;b&gt;/g, "<b>")
-    .replace(/&lt;\/b&gt;/g, "</b>")
-    .replace(/&lt;i&gt;/g, "<i>")
-    .replace(/&lt;\/i&gt;/g, "</i>")
-    .replace(/&lt;s&gt;/g, "<s>")
-    .replace(/&lt;\/s&gt;/g, "</s>")
-    .replace(/&lt;u&gt;/g, "<u>")
-    .replace(/&lt;\/u&gt;/g, "</u>")
-  
-  // Restore links
-  links.forEach((link, i) => {
-    html = html.replace(`\x00LINK${i}\x00`, link)
-  })
-  
-  // Restore tables (before code blocks since tables might contain <pre>)
+  // Restore tables
   tables.forEach((table, i) => {
-    html = html.replace(`\x00TABLE${i}\x00`, table)
+    result = result.replace(`\x00TABLE${i}\x00`, table)
   })
   
-  // Restore code blocks
-  codeBlocks.forEach((code, i) => {
-    html = html.replace(`\x00CODEBLOCK${i}\x00`, `<pre><code>${code}</code></pre>`)
-  })
+  // Clean up extra whitespace
+  result = result.trim()
   
-  // Restore inline code
-  inlineCodes.forEach((code, i) => {
-    html = html.replace(`\x00INLINECODE${i}\x00`, `<code>${code}</code>`)
-  })
-  
-  return html
+  return result
 }
 
 interface TelegramUpdate {
