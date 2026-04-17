@@ -263,13 +263,13 @@ export class IMBridge {
       : `<b>欢迎使用 OpenCode IM Bridge</b>
 ━━━━━━━━━━━━━━━━━━━━
 <b>可用命令：</b>
-/sessions - 列出活动会话
+/sessions - 列出所有会话
 /current - 查看当前选中的会话
 /use &lt;sessionId&gt; - 选择特定会话
 /ask &lt;message&gt; - 向当前会话发送消息
 
 <b>说明：</b>
-- /sessions 显示 busy/retry/1h内活动的会话
+- /sessions 显示所有会话（按 busy → retry → idle 排序）
 - 使用 /use 选择会话后，/ask 会直接向该会话发送消息
 - 当 AI 需要确认时，会自动推送消息给你`
 
@@ -357,20 +357,20 @@ export class IMBridge {
         })
       )
 
-      // Filter to active sessions (busy/retry/recent)
-      const activeSessionsData = sessionStatuses.filter(s => s.isActive)
+      // Filter out error sessions but keep all others (busy/retry/idle/recent)
+      const activeSessionsData = sessionStatuses.filter(s => s.status !== "error")
       
-      // Sort by status priority: busy > retry > recent
+      // Sort by status priority: busy > retry > idle > unknown
       activeSessionsData.sort((a, b) => {
-        const priority = { busy: 0, retry: 1, idle: 2, error: 3, unknown: 4 }
-        return (priority[a.status as keyof typeof priority] ?? 5) - (priority[b.status as keyof typeof priority] ?? 5)
+        const priority = { busy: 0, retry: 1, idle: 2, unknown: 3 }
+        return (priority[a.status as keyof typeof priority] ?? 4) - (priority[b.status as keyof typeof priority] ?? 4)
       })
 
       if (activeSessionsData.length === 0) {
         await this.sendMessage({
-          text: `<b>没有活动会话</b>
+          text: `<b>没有会话</b>
 
-当前没有 busy、retry 状态或1小时内有活动的会话。`,
+当前没有可用的会话。`,
           parseMode: "html"
         })
         return
@@ -388,8 +388,8 @@ export class IMBridge {
       const activeCount = activeSessionsData.length
       const totalCount = sessions.data.length
 
-      let text = `<b>活动会话</b> (${activeCount}/${totalCount})\n`
-      text += `<i>显示 busy/retry/1h内活动</i>\n`
+      let text = `<b>会话列表</b> (${activeCount}/${totalCount})\n`
+      text += `<i>按状态排序: busy → retry → idle</i>\n`
       text += `━━━━━━━━━━━━━━━━━━━━\n\n`
       
       sessionDetails.forEach((session: any, index: number) => {
