@@ -272,9 +272,6 @@ export class IMBridge {
     const args = text.slice(command.length).trim()
     
     switch (command) {
-      case "/start":
-        await this.sendWelcome()
-        break
       case "/help":
         await this.sendHelp()
         break
@@ -307,15 +304,6 @@ export class IMBridge {
         break
       case "/current":
         await this.showCurrentSession(userId)
-        break
-      case "/pending":
-        await this.listPendingRequests()
-        break
-      case "/logs":
-        await this.showRecentLogs()
-        break
-      case "/flush":
-        await this.flushLogsToFile()
         break
       default:
         await this.sendMessage({
@@ -357,76 +345,19 @@ export class IMBridge {
    * Handle image send command
    */
   /**
-   * Show recent logs
-   */
-  private async showRecentLogs(): Promise<void> {
-    const logs = this.getRecentLogs(30)
-    if (!logs) {
-      await this.sendMessage({ text: "<b>暂无日志记录</b>" })
-      return
-    }
-
-    // Truncate if too long for Telegram
-    const maxLength = 3500
-    const displayLogs = logs.length > maxLength
-      ? logs.slice(0, maxLength) + "\n\n... [日志过长，已截断]"
-      : logs
-
-    await this.sendMessage({
-      text: `<b>最近日志</b>\n\n<pre>${this.escapeHtml(displayLogs)}</pre>`,
-      parseMode: "html",
-    })
-  }
-
-  /**
-   * Flush logs to file
-   */
-  private async flushLogsToFile(): Promise<void> {
-    const result = await this.flushLogs()
-    await this.sendMessage({ text: `<b>${result}</b>` })
-  }
-  
-  /**
-   * Send a welcome message
-   */
-  private async sendWelcome(): Promise<void> {
-    const template = this.config.templates?.welcome
-    const text = template 
-      ? template()
-      : `<b>欢迎使用 OpenCode IM Bridge</b>
-━━━━━━━━━━━━━━━━━━━━
-功能：
-- 接收 AI 助手的问题并回复
-- 审批权限请求
-- 查询会话状态
-- 直接向会话发送消息
-
-使用 /help 查看所有命令`
-    
-    await this.sendMessage({ text, parseMode: "html" })
-  }
-  
-  /**
    * Send help message
    */
   private async sendHelp(): Promise<void> {
     const template = this.config.templates?.help
     const text = template
       ? template()
-      : `<b>可用命令</b>
+      : `<b>欢迎使用 OpenCode IM Bridge</b>
 ━━━━━━━━━━━━━━━━━━━━
-<b>查看信息：</b>
+<b>可用命令：</b>
 /sessions - 列出活动会话
 /current - 查看当前选中的会话
-/pending - 查看待处理的请求
-/logs - 查看最近的运行日志
-
-<b>操作会话：</b>
 /use &lt;sessionId&gt; - 选择特定会话
 /ask &lt;message&gt; - 向当前会话发送消息
-
-<b>调试：</b>
-/flush - 将内存日志刷新到文件
 
 <b>说明：</b>
 - /sessions 显示 busy/retry/1h内活动的会话
@@ -920,27 +851,6 @@ export class IMBridge {
         parseMode: "html",
       })
     }
-  }
-  
-  /**
-   * List pending requests
-   */
-  private async listPendingRequests(): Promise<void> {
-    if (this.pendingRequests.size === 0) {
-      await this.sendMessage({ text: "<b>没有待处理的请求</b>" })
-      return
-    }
-
-    let text = `<b>待处理请求</b> (${this.pendingRequests.size})\n━━━━━━━━━━━━━━━━━━━━\n`
-
-    let index = 0
-    for (const [id, req] of this.pendingRequests) {
-      const age = Math.round((Date.now() - req.timestamp) / 60000)
-      text += `${index + 1}. ${req.type}: <code>${id}</code> (${age}分钟前)\n`
-      index++
-    }
-
-    await this.sendMessage({ text, parseMode: "html" })
   }
   
   // ===== OpenCode Event Handlers =====
