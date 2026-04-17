@@ -165,52 +165,61 @@ export function markdownToTelegramHtml(markdown: string): string {
 
 /**
  * Process text to extract code blocks and inline code
+ * Uses a robust parser that correctly handles nested code blocks in AI responses
  */
 function processTextParts(text: string): Part[] {
   const parts: Part[] = []
   const lines = text.split('\n')
   let i = 0
+  let inCodeBlock = false
+  let codeBlockContent: string[] = []
+  let textBuffer: string[] = []
   
   while (i < lines.length) {
     const line = lines[i]
-    
-    // Check for code block start
     const codeBlockMatch = line.match(/^```(\w+)?$/)
-    if (codeBlockMatch) {
-      // Collect code block content
-      const codeLines: string[] = []
-      i++ // Skip the opening ``` line
-      
-      while (i < lines.length) {
-        const codeLine = lines[i]
-        if (codeLine === '```') {
-          // End of code block
-          break
+    
+    if (codeBlockMatch && !inCodeBlock) {
+      // Start of code block - flush text buffer first
+      if (textBuffer.length > 0) {
+        const textContent = textBuffer.join('\n')
+        if (textContent) {
+          parts.push(...processInlineCode(textContent))
         }
-        codeLines.push(codeLine)
-        i++
+        textBuffer = []
       }
-      
-      // Add code block
-      const code = codeLines.join('\n')
+      inCodeBlock = true
+      codeBlockContent = []
+    } else if (line === '```' && inCodeBlock) {
+      // End of code block - add the collected code
+      const code = codeBlockContent.join('\n')
       const escapedCode = escapeHtml(code)
       parts.push({ type: 'codeBlock', content: `<pre><code>${escapedCode}</code></pre>` })
-      
-      // Skip the closing ``` line
-      i++
+      inCodeBlock = false
+      codeBlockContent = []
+    } else if (inCodeBlock) {
+      // Inside code block - collect as-is
+      codeBlockContent.push(line)
     } else {
-      // Regular text line - collect consecutive text lines
-      const textLines: string[] = []
-      while (i < lines.length && !lines[i].match(/^```(\w+)?$/)) {
-        textLines.push(lines[i])
-        i++
-      }
-      
-      // Process collected text for inline code and markdown
-      const textContent = textLines.join('\n')
-      if (textContent) {
-        parts.push(...processInlineCode(textContent))
-      }
+      // Outside code block - add to text buffer
+      textBuffer.push(line)
+    }
+    
+    i++
+  }
+  
+  // Handle unclosed code block (treat remaining as code)
+  if (inCodeBlock && codeBlockContent.length > 0) {
+    const code = codeBlockContent.join('\n')
+    const escapedCode = escapeHtml(code)
+    parts.push({ type: 'codeBlock', content: `<pre><code>${escapedCode}</code></pre>` })
+  }
+  
+  // Flush remaining text buffer
+  if (textBuffer.length > 0) {
+    const textContent = textBuffer.join('\n')
+    if (textContent) {
+      parts.push(...processInlineCode(textContent))
     }
   }
   
