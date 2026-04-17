@@ -156,6 +156,9 @@ export class IMBridge {
         case "select_session":
           await this.handleSessionSelect(callback.user.id, requestId)
           break
+        case "tui_command":
+          await this.handleTuiCommandCallback(callback.user.id, requestId)
+          break
         default:
           this.logger.warn(`Unknown callback action: ${action}`)
       }
@@ -206,6 +209,9 @@ export class IMBridge {
         case "/current":
           await this.showCurrentSession(userId)
           break
+        case "/cmd":
+          await this.sendCommandButtons()
+          break
         default:
           await this.sendMessage({
             text: `<b>未知命令</b>: ${command}\n使用 /help 查看可用命令`,
@@ -223,30 +229,144 @@ export class IMBridge {
   }
 
   /**
-   * Handle remote control command
+   * Send command buttons panel
    */
-  private async handleRemoteCommand(args: string): Promise<void> {
-    const action = args.trim() || "status"
+  private async sendCommandButtons(): Promise<void> {
+    const text = `<b>OpenCode 远程控制面板</b>
+━━━━━━━━━━━━━━━━━━━━
+
+点击下方按钮执行对应操作：
+
+<b>session_compact</b>
+压缩并总结当前会话的历史消息，保留关键信息的同时减少 token 消耗，适合长会话维护。
+
+<b>session_new</b>
+创建一个新的 OpenCode 会话，等同于在 TUI 中按 Ctrl+N。新会话将在后台启动。
+
+<b>session_interrupt</b>
+立即中断当前正在执行的 AI 任务，等同于在 TUI 中按 Ctrl+C。适用于 AI 陷入死循环或响应时间过长的情况。
+
+`
+
+    const keyboard = [
+      [
+        { text: "session_compact", callbackData: "tui_command:session_compact" },
+        { text: "session_new", callbackData: "tui_command:session_new" },
+      ],
+      [
+        { text: "session_interrupt", callbackData: "tui_command:session_interrupt" },
+      ],
+    ]
+
+    await this.sendMessage({
+      text,
+      keyboard: { inline: keyboard },
+      parseMode: "html",
+    })
+  }
+
+  /**
+   * Handle TUI command callback from button click
+   */
+  private async handleTuiCommandCallback(userId: string, command: string): Promise<void> {
+    // Map is now 1:1 with API names
+    const validCommands = ["session_compact", "session_new", "session_interrupt"]
     
-    switch (action) {
-      case "status":
+    if (validCommands.includes(command)) {
+      await this.executeTuiCommand(command, userId)
+    } else {
+      await this.sendMessage({
+        text: `<b>未知操作</b>: ${command}`,
+        parseMode: "html"
+      })
+    }
+  }
+
+  /**
+   * Execute TUI command via OpenCode API
+   */
+  private async executeTuiCommand(command: string, userId?: string): Promise<void> {
+    try {
+      // Get the mapping to check if user has selected a session
+      const mapping = userId ? this.sessionMappings.get(userId) : undefined
+      
+      // Use the SDK client's internal _client which has proper fetch configured
+      const client = (this.input.client as any)._client || this.input.client
+
+      this.logger.info(`Executing TUI command: ${command}`, { sessionId: mapping?.sessionId })
+
+      // Special handling for session_new - directly create session and get ID
+      if (command === "session_new") {
+        const result = await this.input.client.session.create({
+          body: {
+            title: `Remote session ${new Date().toLocaleString("zh-CN")}`,
+          },
+        })
+
+        if (result.error || !result.data?.id) {
+          throw new Error(`Failed to create session: ${JSON.stringify(result.error)}`)
+        }
+
+        const newSessionId = result.data.id
+
+        // Auto-select the new session for the user
+        if (userId) {
+          this.sessionMappings.set(userId, {
+            imUserId: userId,
+            sessionId: newSessionId,
+            lastActivity: Date.now(),
+          })
+        }
+
+        // Navigate TUI to the new session so it becomes visible and active
+        try {
+          await client.post({
+            url: `/tui/select-session`,
+            body: { sessionID: newSessionId },
+          })
+          this.logger.info(`TUI navigated to new session: ${newSessionId}`)
+        } catch (navError) {
+          this.logger.warn(`Failed to navigate TUI to new session`, navError)
+          // Don't fail the whole operation if navigation fails
+        }
+
         await this.sendMessage({
-          text: `📡 <b>连接状态</b>\n\n状态: ✅ 已连接\n平台: Telegram`,
+          text: `<b>✅ 新会话已创建</b>\n━━━━━━━━━━━━━━━━━━━━\n会话 ID: <code>${newSessionId}</code>${userId ? "\n已自动选择此会话" : ""}\n\n现在可以直接发送消息了。`,
           parseMode: "html",
         })
-        break
-      case "restart":
-        await this.sendMessage({
-          text: `🔄 <b>重启连接</b>\n\n正在重启 IM Bridge...`,
-          parseMode: "html",
-        })
-        // Note: Actual restart needs to be handled at plugin level
-        break
-      default:
-        await this.sendMessage({
-          text: `<b>未知操作</b>: ${action}\n可用操作: status, restart`,
-          parseMode: "html"
-        })
+
+        this.logger.info(`Session created successfully: ${newSessionId}`)
+        return
+      }
+
+      const response = await client.post({
+        url: `/tui/execute-command`,
+        body: { command },
+      })
+
+      if (response.error) {
+        throw new Error(`API error: ${JSON.stringify(response.error)}`)
+      }
+
+      const commandNames: Record<string, string> = {
+        session_compact: "压缩会话",
+        session_new: "新建会话",
+        session_interrupt: "中断会话",
+      }
+
+      await this.sendMessage({
+        text: `<b>✅ 命令执行成功</b>\n━━━━━━━━━━━━━━━━━━━━\n操作: ${commandNames[command] || command}${mapping ? `\n会话: <code>${mapping.sessionId}</code>` : ""}`,
+        parseMode: "html",
+      })
+
+      this.logger.info(`TUI command executed successfully: ${command}`)
+    } catch (error) {
+      this.logger.error(`Error executing TUI command: ${command}`, error)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      await this.sendMessage({
+        text: `<b>❌ 命令执行失败</b>\n━━━━━━━━━━━━━━━━━━━━\n操作: ${command}\n错误: <code>${this.escapeHtml(errorMsg)}</code>`,
+        parseMode: "html",
+      })
     }
   }
 
@@ -262,15 +382,19 @@ export class IMBridge {
       ? template()
       : `<b>欢迎使用 OpenCode IM Bridge</b>
 ━━━━━━━━━━━━━━━━━━━━
-<b>可用命令：</b>
+<b>会话管理：</b>
 /sessions - 列出所有会话
 /current - 查看当前选中的会话
 /use &lt;sessionId&gt; - 选择特定会话
 /ask &lt;message&gt; - 向当前会话发送消息
 
+<b>OpenCode 控制命令：</b>
+/cmd - 显示控制面板（点击按钮执行操作）
+
 <b>说明：</b>
 - /sessions 显示所有会话（按 busy → retry → idle 排序）
 - 使用 /use 选择会话后，/ask 会直接向该会话发送消息
+- /cmd 命令可以直接调用 OpenCode 的内部功能
 - 当 AI 需要确认时，会自动推送消息给你`
 
     await this.sendMessage({ text, parseMode: "html" })
@@ -503,6 +627,18 @@ export class IMBridge {
       sessionId,
       lastActivity: Date.now(),
     })
+    
+    // Sync TUI to the selected session
+    const client = (this.input.client as any)._client || this.input.client
+    try {
+      await client.post({
+        url: `/tui/select-session`,
+        body: { sessionID: sessionId },
+      })
+      this.logger.info(`TUI navigated to selected session: ${sessionId}`)
+    } catch (navError) {
+      this.logger.warn(`Failed to navigate TUI to selected session`, navError)
+    }
     
     // Try to get session info for better display
     let sessionTitle = ""
