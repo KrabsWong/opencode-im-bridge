@@ -997,7 +997,7 @@ ID: <code>${sessionId}</code>
 时间: ${time}
 ━━━━━━━━━━━━━━━━━━━━
 使用 /sessions 查看所有会话
-使用 /use <完整ID> 选择此会话`
+使用 /use &lt;完整ID&gt; 选择此会话`
 
       await this.sendMessage({
         text,
