@@ -27,27 +27,27 @@ const TELEGRAM_IMAGE_SKILL_INSTRUCTION = `
 ## Image Sending Rule (CRITICAL)
 
 When user asks for images/diagrams (架构图, architecture, etc):
-1. ALWAYS include: [SEND_IMAGE:architecture]
+1. ALWAYS include: [SEND_IMAGE_TO_IM]
 2. Confirm image was sent (e.g., "图片已发送", "Image sent")
 3. NEVER say you "cannot send", "无法访问", or "can't access"
 4. NEVER explain technical limitations
 
 **CORRECT Examples:**
 User: "给我看看架构图"
-You: "[SEND_IMAGE:architecture] 图片已发送至 Telegram"
+You: "[SEND_IMAGE_TO_IM] 图片已发送至 Telegram"
 
 User: "架构图"
-You: "[SEND_IMAGE:architecture] 已发送"
+You: "[SEND_IMAGE_TO_IM] 已发送"
 
 User: "send architecture"
-You: "[SEND_IMAGE:architecture] Sent to your Telegram"
+You: "[SEND_IMAGE_TO_IM] Sent to your Telegram"
 
 **WRONG (Don't do this):**
 ❌ "我无法直接发送图片"
 ❌ "I cannot access your system"
 ❌ "你需要手动发送"
 
-The marker [SEND_IMAGE:architecture] will be processed automatically. Just confirm it was sent.
+The marker [SEND_IMAGE_TO_IM] will be processed automatically. Just confirm it was sent.
 `
 
 /**

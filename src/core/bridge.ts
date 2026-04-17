@@ -593,7 +593,7 @@ export class IMBridge {
     } catch (error) {
       this.logger.error("Error listing sessions", error)
       await this.sendMessage({
-        text: "❌ 获取会话列表失败: " + (error instanceof Error ? error.message : String(error))
+        text: "获取会话列表失败: " + (error instanceof Error ? error.message : String(error))
       })
     }
   }
@@ -733,35 +733,31 @@ export class IMBridge {
   
   /**
    * Check if AI response contains image trigger markers and send images automatically
-   * Format: [SEND_IMAGE:image_name] or [SEND_IMAGE:image_name|caption]
+   * Format: [SEND_IMAGE_TO_IM] - sends the default architecture image
    */
   private async checkAndSendImagesFromResponse(responseText: string): Promise<string> {
-    // Pattern to match [SEND_IMAGE:image_name] or [SEND_IMAGE:image_name|caption]
-    const imagePattern = /\[SEND_IMAGE:([^\]|]+)(?:\|([^\]]*))?\]/g
+    // Pattern to match [SEND_IMAGE_TO_IM]
+    const imagePattern = /\[SEND_IMAGE_TO_IM\]/g
     let processedText = responseText
-    let match
 
+    // Default image to send (architecture)
+    const defaultImageName = "architecture"
+    const imageInfo = IMAGE_LIBRARY[defaultImageName]
+
+    if (!imageInfo) {
+      this.logger.error(`Default image not found in library: ${defaultImageName}`)
+      return processedText
+    }
+
+    let match
     while ((match = imagePattern.exec(responseText)) !== null) {
-      const imageName = match[1].trim()
-      const caption = match[2]?.trim()
       const fullMatch = match[0]
 
-      this.logger.info(`Detected image trigger: ${imageName}`, { caption })
+      this.logger.info(`Detected image trigger: ${defaultImageName}`)
 
       // Check if adapter supports sending photos
       if (!this.adapter.sendPhoto) {
         this.logger.error("Adapter does not support sendPhoto")
-        continue
-      }
-
-      // Find image in library
-      const imageInfo = IMAGE_LIBRARY[imageName]
-      if (!imageInfo) {
-        this.logger.error(`Image not found in library: ${imageName}`)
-        await this.sendMessage({
-          text: `❌ 图片 "${imageName}" 未在图片库中定义`,
-        })
-        processedText = processedText.replace(fullMatch, "")
         continue
       }
 
@@ -771,9 +767,9 @@ export class IMBridge {
       if (!exists) {
         this.logger.error(`Image file not found: ${imageInfo.path}`)
         await this.sendMessage({
-          text: `❌ 图片文件不存在: ${imageInfo.path}\n\n请检查图片文件是否已放置到正确位置。`,
+          text: `图片文件不存在: ${imageInfo.path}\n\n请检查图片文件是否已放置到正确位置。`,
         })
-        processedText = processedText.replace(fullMatch, `[图片文件不存在: ${imageName}]`)
+        processedText = processedText.replace(fullMatch, `[图片文件不存在]`)
         continue
       }
 
@@ -781,16 +777,16 @@ export class IMBridge {
         // Send the image
         await this.adapter.sendPhoto(
           imageInfo.path,
-          caption || `<b>${imageInfo.description}</b>`
+          `<b>${imageInfo.description}</b>`
         )
-        this.logger.info(`Auto-sent image: ${imageName}`)
+        this.logger.info(`Auto-sent image: ${defaultImageName}`)
 
         // Remove the marker from the response text
         processedText = processedText.replace(fullMatch, "")
       } catch (error) {
-        this.logger.error(`Failed to auto-send image ${imageName}:`, error)
+        this.logger.error(`Failed to auto-send image ${defaultImageName}:`, error)
         await this.sendMessage({
-          text: `❌ 发送图片失败: ${error instanceof Error ? error.message : String(error)}`,
+          text: `发送图片失败: ${error instanceof Error ? error.message : String(error)}`,
         })
       }
     }
@@ -827,7 +823,7 @@ export class IMBridge {
     
     if (!sessionId) {
       await this.sendMessage({
-        text: "❌ 没有选中的会话。请先使用 /sessions 选择会话，或我会自动使用最新的会话。",
+        text: "没有选中的会话。请先使用 /sessions 选择会话，或我会自动使用最新的会话。",
       })
       return
     }
@@ -1198,7 +1194,7 @@ ID: <code>${sessionId}</code>
       this.logger.error("Error replying to question", error)
       const errorMsg = error instanceof Error ? error.message : String(error)
       await this.sendMessage({
-        text: `❌ 发送回复失败: ${errorMsg}\n\n请检查 OpenCode 日志获取详细信息`,
+        text: `发送回复失败: ${errorMsg}\n\n请检查 OpenCode 日志获取详细信息`,
         parseMode: "html",
       })
     }
