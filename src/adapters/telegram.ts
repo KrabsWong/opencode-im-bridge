@@ -210,9 +210,13 @@ function escapeHtml(text: string): string {
 function markdownToTelegramHtml(markdown: string): string {
   if (!markdown) return ""
   
+  adapterLogger.debug(`[markdownToTelegramHtml] Input: ${markdown.slice(0, 100)}...`)
+  adapterLogger.debug(`[markdownToTelegramHtml] Contains HTML tags: ${containsHtmlTags(markdown)}`)
+  
   // If text already contains HTML tags, assume it's pre-formatted HTML
   // Just escape any raw < or > that are not part of tags
   if (containsHtmlTags(markdown)) {
+    adapterLogger.debug(`[markdownToTelegramHtml] Skipping marked, preserving existing HTML`)
     // Protect existing HTML tags while escaping raw < >
     const protectedTags: string[] = []
     let html = markdown.replace(/<\/?[a-z][^>]*?>/gi, (match) => {
@@ -246,14 +250,14 @@ function markdownToTelegramHtml(markdown: string): string {
   // Configure marked with custom renderer
   const renderer = createTelegramRenderer()
   
-  marked.setOptions({
+  marked.use({ 
     renderer: renderer as any,
     gfm: true,
     breaks: true
   })
   
   // Parse markdown
-  let result = marked.parse(html) as string
+  let result: string = marked.parse(html) as string
   
   // Restore tables
   tables.forEach((table, i) => {

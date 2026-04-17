@@ -267,48 +267,57 @@ export class IMBridge {
    * Handle bot commands
    */
   private async handleCommand(text: string, userId: string, message: IMMessage): Promise<void> {
-    const command = text.split(" ")[0].toLowerCase()
-    const args = text.slice(command.length).trim()
-    
-    switch (command) {
-      case "/help":
-        await this.sendHelp()
-        break
-      case "/sessions":
-        await this.listSessions(userId)
-        break
-      case "/use":
-        if (args) {
-          await this.selectSession(userId, args)
-        }
-        break
-      case "/ask":
-        if (args && this.config.features?.directMessaging) {
-          // Check if user has selected a session
-          const mapping = this.sessionMappings.get(userId)
-          if (!mapping) {
+    try {
+      const command = text.split(" ")[0].toLowerCase()
+      const args = text.slice(command.length).trim()
+      
+      switch (command) {
+        case "/help":
+          await this.sendHelp()
+          break
+        case "/sessions":
+          await this.listSessions(userId)
+          break
+        case "/use":
+          if (args) {
+            await this.selectSession(userId, args)
+          }
+          break
+        case "/ask":
+          if (args && this.config.features?.directMessaging) {
+            // Check if user has selected a session
+            const mapping = this.sessionMappings.get(userId)
+            if (!mapping) {
+              await this.sendMessage({
+                text: "<b>请先选择会话</b>\n\n使用 /sessions 查看并选择会话，\n或者使用 /use <sessionId> 直接选择。",
+                parseMode: "html",
+              })
+              return
+            }
+            await this.handleDirectMessage(args, userId, message)
+          } else {
             await this.sendMessage({
-              text: "<b>请先选择会话</b>\n\n使用 /sessions 查看并选择会话，\n或者使用 /use <sessionId> 直接选择。",
+              text: "<b>请提供消息内容</b>\n\n例如: <code>/ask 现在进度如何？</code>",
               parseMode: "html",
             })
-            return
           }
-          await this.handleDirectMessage(args, userId, message)
-        } else {
+          break
+        case "/current":
+          await this.showCurrentSession(userId)
+          break
+        default:
           await this.sendMessage({
-            text: "<b>请提供消息内容</b>\n\n例如: <code>/ask 现在进度如何？</code>",
-            parseMode: "html",
+            text: `<b>未知命令</b>: ${command}\n使用 /help 查看可用命令`,
+            parseMode: "html"
           })
-        }
-        break
-      case "/current":
-        await this.showCurrentSession(userId)
-        break
-      default:
-        await this.sendMessage({
-          text: `<b>未知命令</b>: ${command}\n使用 /help 查看可用命令`,
-          parseMode: "html"
-        })
+      }
+    } catch (error) {
+      this.logger.error("Error handling command", error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await this.sendMessage({
+        text: `<b>命令执行失败</b>\n━━━━━━━━━━━━━━━━━━━━\n错误: <code>${this.escapeHtml(errorMessage)}</code>`,
+        parseMode: "html"
+      })
     }
   }
 
