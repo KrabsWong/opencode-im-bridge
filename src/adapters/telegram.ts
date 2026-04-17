@@ -5,274 +5,11 @@ import type {
   IMOutgoingMessage,
   TelegramConfig
 } from "../types/index.js"
-import { IMBridgeLogger } from "../core/bridge.js"
-import { marked } from "marked"
+import { IMBridgeLogger } from "../core/logger.js"
+import { markdownToTelegramHtml, containsHtmlTags, escapeHtml } from "../core/markdown.js"
 
 // Adapter-level logger
 const adapterLogger = new IMBridgeLogger(".opencode/im-bridge-adapter.log")
-
-/**
- * Convert Markdown table to Telegram-compatible <pre> format with aligned columns
- */
-function markdownTableToTelegramPre(tableText: string): string {
-  const lines = tableText.trim().split('\n')
-  if (lines.length < 2) return tableText
-  
-  // Parse rows
-  const rows: string[][] = []
-  for (const line of lines) {
-    const cells = line
-      .split('|')
-      .map(cell => cell.trim())
-      .filter(cell => cell.length > 0)
-    if (cells.length > 0) {
-      rows.push(cells)
-    }
-  }
-  
-  if (rows.length < 2) return tableText
-  
-  // Remove separator row (---|---|---)
-  const dataRows = rows.filter((row, index) => {
-    if (index === 0) return true // Keep header
-    return !row.every(cell => /^[-:]+$/.test(cell)) // Filter out separator rows
-  })
-  
-  if (dataRows.length < 1) return tableText
-  
-  // Calculate column widths
-  const colCount = Math.max(...dataRows.map(row => row.length))
-  const colWidths: number[] = new Array(colCount).fill(0)
-  
-  for (const row of dataRows) {
-    for (let i = 0; i < row.length; i++) {
-      // Calculate display width (simple: length for ASCII, double for CJK)
-      const displayWidth = [...row[i]].reduce((acc, char) => {
-        // CJK characters are roughly 2x width
-        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
-      }, 0)
-      colWidths[i] = Math.max(colWidths[i], displayWidth)
-    }
-  }
-  
-  // Pad columns and build table
-  const formattedRows: string[] = []
-  
-  for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-    const row = dataRows[rowIndex]
-    const paddedCells: string[] = []
-    
-    for (let i = 0; i < colCount; i++) {
-      const cell = row[i] || ''
-      const width = colWidths[i]
-      
-      // Calculate padding needed
-      const cellWidth = [...cell].reduce((acc, char) => {
-        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
-      }, 0)
-      const padding = width - cellWidth
-      
-      paddedCells.push(cell + ' '.repeat(Math.max(0, padding)))
-    }
-    
-    formattedRows.push(paddedCells.join(' │ '))
-    
-    // Add separator after header
-    if (rowIndex === 0) {
-      const separator = colWidths.map(w => '─'.repeat(w)).join('─┼─')
-      formattedRows.push(separator)
-    }
-  }
-  
-  return `<pre>${formattedRows.join('\n')}</pre>`
-}
-
-/**
- * Custom marked renderer for Telegram HTML subset
- * Telegram supports: <b>, <i>, <u>, <s>, <a>, <code>, <pre>
- */
-function createTelegramRenderer() {
-  return {
-    // Space between tokens
-    space(): string {
-      return ''
-    },
-    
-    // Text styling
-    strong(text: string): string {
-      return `<b>${text}</b>`
-    },
-    
-    em(text: string): string {
-      return `<i>${text}</i>`
-    },
-    
-    del(text: string): string {
-      return `<s>${text}</s>`
-    },
-    
-    // Code
-    code(code: string, language?: string): string {
-      // Escape HTML in code
-      const escapedCode = code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-      return `<pre><code>${escapedCode}</code></pre>`
-    },
-    
-    codespan(code: string): string {
-      // Escape HTML in inline code
-      const escapedCode = code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-      return `<code>${escapedCode}</code>`
-    },
-    
-    // Links
-    link(href: string, title: string | null | undefined, text: string): string {
-      return `<a href="${href}">${text}</a>`
-    },
-    
-    // Paragraphs - just return text without <p> tags
-    paragraph(text: string): string {
-      return text + '\n\n'
-    },
-    
-    // Headings - use bold
-    heading(text: string, level: number): string {
-      return `<b>${text}</b>\n\n`
-    },
-    
-    // Blockquote - use italic
-    blockquote(quote: string): string {
-      return `<i>${quote.trim()}</i>\n\n`
-    },
-    
-    // Lists - Telegram doesn't support HTML lists, use text format
-    list(body: string, ordered: boolean): string {
-      return body + '\n'
-    },
-    
-    listitem(text: string): string {
-      return `• ${text.trim()}\n`
-    },
-    
-    // Horizontal rule
-    hr(): string {
-      return '─────────────────\n\n'
-    },
-    
-    // Line break
-    br(): string {
-      return '\n'
-    },
-    
-    // Tables - use custom format
-    table(header: string, body: string): string {
-      // Extract table content and convert to aligned format
-      return header + body
-    },
-    
-    tablerow(content: string): string {
-      return content
-    },
-    
-    tablecell(content: string, flags: { header: boolean; align: 'center' | 'left' | 'right' | null }): string {
-      return content + ' | '
-    }
-  }
-}
-
-/**
- * Check if text already contains HTML tags
- */
-function containsHtmlTags(text: string): boolean {
-  // Match common HTML tags
-  return /<\/?[a-z][\s\S]*?>/i.test(text)
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-}
-
-/**
- * Convert Markdown to Telegram HTML subset using marked library
- * Preserves existing HTML tags while converting Markdown
- */
-function markdownToTelegramHtml(markdown: string): string {
-  if (!markdown) return ""
-  
-  // Extract tables first (marked doesn't have good table rendering for Telegram)
-  let html = markdown
-  const tables: string[] = []
-  
-  const tablePattern = /(\|[^\n]+\|\n\|[-:|\s]+\|\n(?:\|[^\n]+\|\n?)+)/g
-  html = html.replace(tablePattern, (match) => {
-    const placeholder = `\x00TABLE${tables.length}\x00`
-    tables.push(markdownTableToTelegramPre(match))
-    return placeholder
-  })
-  
-  // Protect existing HTML tags (like <b>, <code>, etc.) from marked processing
-  const protectedTags: string[] = []
-  html = html.replace(/<\/?[a-z][^>]*?>/gi, (match) => {
-    // Only protect Telegram-supported tags
-    const isTelegramTag = /<(\/?)(b|i|u|s|a|code|pre|tg-spoiler)(\s|>)/i.test(match)
-    if (isTelegramTag) {
-      const placeholder = `\x00HTMLTAG${protectedTags.length}\x00`
-      protectedTags.push(match)
-      return placeholder
-    }
-    return match
-  })
-  
-  // Configure marked with custom renderer
-  const renderer = createTelegramRenderer()
-  
-  marked.use({ 
-    renderer: renderer as any,
-    gfm: true,
-    breaks: true
-  })
-  
-  // Parse markdown (converts **bold** to <b>bold</b>, etc.)
-  let result: string = marked.parse(html) as string
-  
-  // Convert unsupported HTML tags to Telegram-compatible ones
-  result = result
-    .replace(/<strong>/g, "<b>")
-    .replace(/<\/strong>/g, "</b>")
-    .replace(/<em>/g, "<i>")
-    .replace(/<\/em>/g, "</i>")
-  
-  // Remove <p> tags (Telegram doesn't support them)
-  result = result
-    .replace(/<p>/g, "")
-    .replace(/<\/p>\n?/g, "\n\n")
-  
-  // Restore protected HTML tags
-  protectedTags.forEach((tag, i) => {
-    result = result.replace(`\x00HTMLTAG${i}\x00`, tag)
-  })
-  
-  // Restore tables
-  tables.forEach((table, i) => {
-    result = result.replace(`\x00TABLE${i}\x00`, table)
-  })
-  
-  // Clean up extra whitespace
-  result = result.trim()
-  
-  return result
-}
 
 interface TelegramUpdate {
   update_id: number
@@ -388,13 +125,9 @@ export class TelegramAdapter implements IMAdapter {
   async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     adapterLogger.debug(`[TelegramAdapter] sendMessage called with text length: ${message.text.length}`)
     
-    // Convert Markdown to HTML if parseMode is html
-    let text = message.text
-    if (message.parseMode === "html") {
-      adapterLogger.debug(`[TelegramAdapter] Original text: ${text.substring(0, 200)}`)
-      text = markdownToTelegramHtml(text)
-      adapterLogger.debug(`[TelegramAdapter] Converted text: ${text.substring(0, 200)}`)
-    }
+    // Note: When parseMode is "html", the message.text should already be valid HTML
+    // (generated by bridge.ts using escapeHtml). We don't need to convert Markdown here.
+    const text = message.text
     
     const body: Record<string, unknown> = {
       chat_id: this.config.chatId,
@@ -428,12 +161,27 @@ export class TelegramAdapter implements IMAdapter {
     }
     
     adapterLogger.debug(`[TelegramAdapter] Sending request`, { body })
+    adapterLogger.info(`[TelegramAdapter] Final text being sent: ${JSON.stringify(body.text)}`)
+    
+    // Validate HTML before sending
+    if (message.parseMode === "html") {
+      const validation = this.validateHtml(text)
+      if (!validation.valid) {
+        adapterLogger.error(`[TelegramAdapter] HTML validation failed: ${validation.error}`)
+        adapterLogger.error(`[TelegramAdapter] Invalid HTML content: ${text.substring(0, 500)}`)
+      }
+    }
 
     const res = await this.makeRequest<TelegramResponse>("sendMessage", body)
 
     adapterLogger.debug(`[TelegramAdapter] Response`, { res })
     
     if (!res.ok) {
+      adapterLogger.error(`[TelegramAdapter] Telegram API error details:`, { 
+        description: res.description, 
+        body: JSON.stringify(body).substring(0, 1000),
+        text: text.substring(0, 500)
+      })
       throw new Error(`Telegram API error: ${res.description}`)
     }
     
@@ -444,11 +192,8 @@ export class TelegramAdapter implements IMAdapter {
    * Edit an existing message
    */
   async editMessage(messageId: string, message: IMOutgoingMessage): Promise<void> {
-    // Convert Markdown to HTML if parseMode is html
-    let text = message.text
-    if (message.parseMode === "html") {
-      text = markdownToTelegramHtml(text)
-    }
+    // Note: When parseMode is "html", the message.text should already be valid HTML
+    const text = message.text
     
     const body: Record<string, unknown> = {
       chat_id: this.config.chatId,
@@ -728,6 +473,56 @@ export class TelegramAdapter implements IMAdapter {
   }
   
   /**
+   * Validate Telegram HTML format
+   * Returns validation result with error details if invalid
+   */
+  private validateHtml(html: string): { valid: boolean; error?: string } {
+    // Check for unclosed tags
+    const openTags: string[] = []
+    const tagPattern = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*?>/g
+    let match
+    
+    while ((match = tagPattern.exec(html)) !== null) {
+      const isClosing = match[1] === '/'
+      const tagName = match[2].toLowerCase()
+      
+      // Skip self-closing tags and void elements
+      if (match[0].endsWith('/>') || ['br', 'hr', 'img', 'input', 'meta', 'link'].includes(tagName)) {
+        continue
+      }
+      
+      if (isClosing) {
+        const lastOpen = openTags.pop()
+        if (lastOpen !== tagName) {
+          return { 
+            valid: false, 
+            error: `Mismatched tags: expected </${lastOpen}>, found </${tagName}> at position ${match.index}` 
+          }
+        }
+      } else {
+        openTags.push(tagName)
+      }
+    }
+    
+    if (openTags.length > 0) {
+      return { 
+        valid: false, 
+        error: `Unclosed tags: ${openTags.join(', ')}` 
+      }
+    }
+    
+    // Check for invalid characters in HTML
+    if (html.includes('\x00') || html.includes('\x01') || html.includes('\x02')) {
+      return { 
+        valid: false, 
+        error: 'HTML contains invalid control characters' 
+      }
+    }
+    
+    return { valid: true }
+  }
+
+  /**
    * Make API request to Telegram
    */
   private async makeRequest<T>(method: string, body?: Record<string, unknown>): Promise<T> {
@@ -744,13 +539,37 @@ export class TelegramAdapter implements IMAdapter {
       options.body = JSON.stringify(body)
     }
     
+    // Log the complete request for debugging
+    adapterLogger.info(`[TelegramAdapter] HTTP Request: ${method}`)
+    adapterLogger.info(`[TelegramAdapter] Request URL: ${url}`)
+    if (body) {
+      const logBody = { ...body }
+      if (logBody.text) {
+        logBody.text = String(logBody.text).substring(0, 200) + (String(logBody.text).length > 200 ? '...' : '')
+      }
+      adapterLogger.info(`[TelegramAdapter] Request body: ${JSON.stringify(logBody)}`)
+    }
+    
     const res = await fetch(url, options)
+    
+    // Log the raw response
+    const responseText = await res.text()
+    adapterLogger.info(`[TelegramAdapter] HTTP Response status: ${res.status}`)
+    adapterLogger.info(`[TelegramAdapter] Response text: ${responseText.substring(0, 500)}`)
+    
+    // Parse JSON response
+    let responseData: T
+    try {
+      responseData = JSON.parse(responseText) as T
+    } catch {
+      throw new Error(`Telegram API error: Invalid JSON response - ${responseText}`)
+    }
     
     if (!res.ok) {
       throw new Error(`Telegram API error: ${res.status} ${res.statusText}`)
     }
     
-    return res.json() as Promise<T>
+    return responseData
   }
 }
 

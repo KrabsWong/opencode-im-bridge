@@ -1,6 +1,7 @@
 import type { Plugin, PluginModule, Hooks } from "@opencode-ai/plugin"
 import type { IMBridgeOptions, IMAdapter } from "./types/index.js"
-import { IMBridge, IMBridgeLogger } from "./core/bridge.js"
+import { IMBridge } from "./core/bridge.js"
+import { IMBridgeLogger } from "./core/logger.js"
 import { TelegramAdapter } from "./adapters/telegram.js"
 
 // Global logger for plugin-level logging

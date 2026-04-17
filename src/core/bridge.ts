@@ -9,6 +9,8 @@ import type {
   BridgeConfig
 } from "../types/index.js"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { IMBridgeLogger } from "./logger.js"
+import { markdownToTelegramHtml } from "./markdown.js"
 
 interface PendingRequest {
   type: "question" | "permission"
@@ -34,107 +36,6 @@ const IMAGE_LIBRARY: Record<string, { path: string; description: string }> = {
   },
   // Add more images here as needed:
   // workflow: { path: "/path/to/workflow.png", description: "工作流程图" },
-}
-
-/**
- * In-memory logger with periodic file flush
- */
-export class IMBridgeLogger {
-  private buffer: Array<{ timestamp: string; level: string; message: string; data?: unknown }> = []
-  private readonly maxBufferSize = 1000
-  private readonly flushInterval = 5 * 60 * 1000 // 5 minutes
-  private readonly logFile: string
-  private flushTimer?: ReturnType<typeof setInterval>
-
-  constructor(logFile: string = ".opencode/im-bridge.log") {
-    this.logFile = logFile
-    this.startFlushTimer()
-  }
-
-  private startFlushTimer() {
-    this.flushTimer = setInterval(() => this.flush(), this.flushInterval)
-  }
-
-  private formatLogEntry(entry: { timestamp: string; level: string; message: string; data?: unknown }): string {
-    let line = `[${entry.timestamp}] [${entry.level}] ${entry.message}`
-    if (entry.data !== undefined) {
-      try {
-        const dataStr = typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data)
-        line += ` ${dataStr}`
-      } catch {
-        line += ` [unserializable data]`
-      }
-    }
-    return line
-  }
-
-  log(level: string, message: string, data?: unknown) {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      level,
-      message,
-      data
-    }
-
-    this.buffer.push(entry)
-
-    // Keep only last maxBufferSize entries
-    if (this.buffer.length > this.maxBufferSize) {
-      this.buffer = this.buffer.slice(-this.maxBufferSize)
-    }
-  }
-
-  debug(message: string, data?: unknown) {
-    this.log("DEBUG", message, data)
-  }
-
-  info(message: string, data?: unknown) {
-    this.log("INFO", message, data)
-  }
-
-  warn(message: string, data?: unknown) {
-    this.log("WARN", message, data)
-  }
-
-  error(message: string, data?: unknown) {
-    this.log("ERROR", message, data)
-  }
-
-  async flush() {
-    if (this.buffer.length === 0) return
-
-    try {
-      const entries = this.buffer.map(e => this.formatLogEntry(e)).join("\n") + "\n"
-
-      // Try to append to existing file or create new one
-      const file = Bun.file(this.logFile)
-      const exists = await file.exists()
-
-      if (exists) {
-        const existing = await file.text()
-        await Bun.write(this.logFile, existing + entries)
-      } else {
-        await Bun.write(this.logFile, entries)
-      }
-
-      // Clear buffer after successful flush
-      this.buffer = []
-    } catch (err) {
-      // Silent fail - don't throw during logging
-    }
-  }
-
-  getRecentEntries(count: number = 50): string {
-    return this.buffer.slice(-count).map(e => this.formatLogEntry(e)).join("\n")
-  }
-
-  stop() {
-    if (this.flushTimer) {
-      clearInterval(this.flushTimer)
-    }
-    // Final flush
-    this.flush()
-  }
 }
 
 /**
@@ -607,7 +508,7 @@ export class IMBridge {
     let sessionTitle = ""
     try {
       const sessionInfo = await this.input.client.session.get({ path: { id: sessionId } })
-      sessionTitle = sessionInfo.data?.title || ""
+      sessionTitle = String(sessionInfo.data?.title || "")
     } catch {
       // Ignore error, use ID only
     }
@@ -767,6 +668,9 @@ export class IMBridge {
       return
     }
     
+    // Declare responseText outside try block for fallback access
+    let responseText = ""
+    
     try {
       this.logger.debug(`Sending message to session ${sessionId}`, { text: text.slice(0, 100) })
 
@@ -777,7 +681,7 @@ export class IMBridge {
         const sessionCheck = await this.input.client.session.get({ path: { id: sessionId } })
         const statusRes = await this.input.client.session.status({ path: { id: sessionId } })
         this.logger.debug("Session check", { found: !!sessionCheck.data })
-        sessionTitle = sessionCheck.data?.title || ""
+        sessionTitle = String(sessionCheck.data?.title || "")
         // status() returns dictionary { [sessionId]: { type: "idle"|"busy"|"retry" } }
         const statusData = (statusRes.data as any)?.[sessionId]
         sessionStatus = statusData?.type || "unknown"
@@ -821,7 +725,7 @@ export class IMBridge {
       
       // Extract AI response from result
       const response = result.data as any
-      let responseText = ""
+      responseText = ""
       
       if (response) {
         // Try different response formats
@@ -835,6 +739,9 @@ export class IMBridge {
         responseText = "AI 已处理请求，但没有返回文本内容。"
       }
       
+      // Store original response for potential fallback
+      const originalResponseText = responseText
+      
       // Check for image triggers in AI response and auto-send images
       let processedResponse = await this.checkAndSendImagesFromResponse(responseText)
 
@@ -844,20 +751,45 @@ export class IMBridge {
         ? processedResponse.slice(0, maxLength) + "...\n\n[消息过长，已截断]"
         : processedResponse
 
+      // Convert Markdown to HTML for AI response
+      this.logger.debug("Original AI response before markdown conversion", { 
+        text: displayResponse.substring(0, 500),
+        length: displayResponse.length 
+      })
+      const htmlResponse = markdownToTelegramHtml(displayResponse)
+      this.logger.debug("Converted HTML response", { 
+        text: htmlResponse.substring(0, 500),
+        length: htmlResponse.length 
+      })
+
       // Send the AI response (only if there's content left after removing image markers)
-      if (displayResponse.trim()) {
+      if (htmlResponse.trim()) {
         await this.sendMessage({
-          text: `<b>AI 回复</b>\n\n${displayResponse}`,
+          text: `<b>AI 回复</b>\n\n${htmlResponse}`,
           parseMode: "html",
         })
       }
     } catch (error) {
       this.logger.error("Error sending message", error)
       const errorMessage = error instanceof Error ? error.message : String(error)
-      await this.sendMessage({
-        text: `<b>发送消息失败</b>\n━━━━━━━━━━━━━━━━━━━━\n错误: <code>${this.escapeHtml(errorMessage)}</code>\n\n请检查:\n1. 会话 ID 是否正确\n2. 会话是否仍然活跃\n3. 使用 /sessions 查看可用会话`,
-        parseMode: "html",
-      })
+
+      // Fallback: try to send the original response text as plain text
+      try {
+        if (responseText) {
+          await this.adapter.sendMessage({
+            text: `[AI 回复 - 格式渲染失败，显示原始内容]\n\n${responseText}`,
+            parseMode: "plain",
+          })
+        } else {
+          throw new Error("No response text available")
+        }
+      } catch (fallbackError) {
+        // If even plain text fails, send error message
+        await this.sendMessage({
+          text: `<b>发送消息失败</b>\n━━━━━━━━━━━━━━━━━━━━\n错误: <code>${this.escapeHtml(errorMessage)}</code>\n\n请检查:\n1. 会话 ID 是否正确\n2. 会话是否仍然活跃\n3. 使用 /sessions 查看可用会话`,
+          parseMode: "html",
+        })
+      }
     }
   }
   
@@ -1192,8 +1124,33 @@ ID: <code>${sessionId}</code>
   
   /**
    * Send message through adapter
+   * Fallback to plain text if HTML parsing fails
    */
   private async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
-    return this.adapter.sendMessage(message)
+    try {
+      return await this.adapter.sendMessage(message)
+    } catch (error) {
+      // If HTML parsing failed, try sending as plain text
+      if (message.parseMode === "html" && error instanceof Error && 
+          (error.message.includes("400") || error.message.includes("parse entities"))) {
+        this.logger.warn("HTML parsing failed, falling back to plain text", { error: error.message })
+        
+        // Strip HTML tags for plain text fallback
+        const plainText = message.text
+          .replace(/<[^>]+>/g, "")  // Remove HTML tags
+          .replace(/&lt;/g, "<")    // Unescape HTML entities
+          .replace(/&gt;/g, ">")
+          .replace(/&amp;/g, "&")
+          .replace(/&quot;/g, '"')
+        
+        return await this.adapter.sendMessage({
+          ...message,
+          text: `[格式渲染失败，以纯文本显示]\n\n${plainText}`,
+          parseMode: "plain",
+        })
+      }
+      // Re-throw other errors
+      throw error
+    }
   }
 }
