@@ -771,6 +771,19 @@ export class IMBridge {
   }
 
   /**
+   * Get session prefix for messages
+   */
+  private async getSessionPrefix(sessionId: string): Promise<string> {
+    try {
+      const sessionRes = await this.input.client.session.get({ path: { id: sessionId } })
+      const title = sessionRes.data?.title || "未命名"
+      return `<code>${sessionId}</code>:${this.escapeHtml(title)}`
+    } catch {
+      return `<code>${sessionId}</code>:未知会话`
+    }
+  }
+
+  /**
    * Handle direct messages to sessions
    */
   private async handleDirectMessage(text: string, userId: string, _message: IMMessage): Promise<void> {
@@ -826,13 +839,14 @@ export class IMBridge {
         throw new Error(`会话不存在或已过期: ${sessionId}`)
       }
 
+      // Get session prefix for consistent formatting
+      const sessionPrefix = await this.getSessionPrefix(sessionId)
+
       // Warn if session is not active
       if (sessionStatus === "idle") {
         await this.sendMessage({
-          text: `<b>警告: 会话可能已关闭或不活跃</b>\n` +
-                `━━━━━━━━━━━━━━━━━━━━\n` +
-                `名称: ${this.escapeHtml(sessionTitle || "未命名")}\n` +
-                `ID: <code>${sessionId}</code>\n` +
+          text: `${sessionPrefix}\n` +
+                `<b>⚠️ 警告: 会话可能已关闭或不活跃</b>\n` +
                 `状态: ${this.getStatusLabel(sessionStatus)}\n\n` +
                 `消息仍会尝试发送，但可能无法得到响应。\n` +
                 `建议使用 /sessions 选择活跃的会话。`,
@@ -841,10 +855,9 @@ export class IMBridge {
         // Continue anyway but warn user
       }
 
-      // Send initial "processing" message with full session info
-      const titleDisplay = sessionTitle ? `<b>${this.escapeHtml(sessionTitle)}</b>\n` : ""
+      // Send initial "processing" message with session prefix
       await this.sendMessage({
-        text: `<b>正在处理请求...</b>\n${titleDisplay}ID: <code>${sessionId}</code>`,
+        text: `${sessionPrefix}\n<b>⏳ 正在处理请求...</b>`,
         parseMode: "html",
       })
 
@@ -898,10 +911,10 @@ export class IMBridge {
         length: htmlResponse.length 
       })
 
-      // Send the AI response (only if there's content left after removing image markers)
+      // Send the AI response with session prefix (only if there's content left after removing image markers)
       if (htmlResponse.trim()) {
         await this.sendMessage({
-          text: `<b>AI 回复</b>\n\n${htmlResponse}`,
+          text: `${sessionPrefix}\n<b>💬 AI 回复</b>\n\n${htmlResponse}`,
           parseMode: "html",
         })
       }
@@ -909,11 +922,14 @@ export class IMBridge {
       this.logger.error("Error sending message", error)
       const errorMessage = error instanceof Error ? error.message : String(error)
 
+      // Get session prefix for error message
+      let errorPrefix = sessionId ? await this.getSessionPrefix(sessionId) : "未知会话"
+
       // Fallback: try to send the original response text as plain text
       try {
         if (responseText) {
           await this.adapter.sendMessage({
-            text: `[AI 回复 - 格式渲染失败，显示原始内容]\n\n${responseText}`,
+            text: `${errorPrefix}\n[💬 AI 回复 - 格式渲染失败，显示原始内容]\n\n${responseText}`,
             parseMode: "plain",
           })
         } else {
@@ -922,7 +938,7 @@ export class IMBridge {
       } catch (fallbackError) {
         // If even plain text fails, send error message
         await this.sendMessage({
-          text: `<b>发送消息失败</b>\n━━━━━━━━━━━━━━━━━━━━\n错误: <code>${this.escapeHtml(errorMessage)}</code>\n\n请检查:\n1. 会话 ID 是否正确\n2. 会话是否仍然活跃\n3. 使用 /sessions 查看可用会话`,
+          text: `${errorPrefix}\n<b>❌ 发送消息失败</b>\n━━━━━━━━━━━━━━━━━━━━\n错误: <code>${this.escapeHtml(errorMessage)}</code>\n\n请检查:\n1. 会话 ID 是否正确\n2. 会话是否仍然活跃\n3. 使用 /sessions 查看可用会话`,
           parseMode: "html",
         })
       }
@@ -1000,8 +1016,9 @@ export class IMBridge {
    */
   private formatQuestionText(info: QuestionInfo, sessionTitle: string, sessionDirectory: string): string {
     const q = info.questions[0]
-    let text = `<b>❓ 需要您的确认</b>\n━━━━━━━━━━━━━━━━━━━━\n`
-    text += `<b>来自会话:</b> ${this.escapeHtml(sessionTitle)}\n`
+    const sessionId = info.sessionId
+    let text = `<code>${sessionId}</code>:${this.escapeHtml(sessionTitle)}\n`
+    text += `<b>❓ 需要您的确认</b>\n`
     text += `<b>工作目录:</b> <code>${this.escapeHtml(sessionDirectory)}</code>\n`
     text += `━━━━━━━━━━━━━━━━━━━━\n`
     text += `<b>${this.escapeHtml(q.header)}</b>\n\n`
@@ -1072,8 +1089,9 @@ export class IMBridge {
    * Format permission text with HTML
    */
   private formatPermissionText(info: PermissionInfo, sessionTitle: string, sessionDirectory: string): string {
-    let text = `<b>🔒 权限请求</b>\n━━━━━━━━━━━━━━━━━━━━\n`
-    text += `<b>来自会话:</b> ${this.escapeHtml(sessionTitle)}\n`
+    const sessionId = info.sessionId
+    let text = `<code>${sessionId}</code>:${this.escapeHtml(sessionTitle)}\n`
+    text += `<b>🔒 权限请求</b>\n`
     text += `<b>工作目录:</b> <code>${this.escapeHtml(sessionDirectory)}</code>\n`
     text += `━━━━━━━━━━━━━━━━━━━━\n`
     text += `<b>请求工具:</b> <code>${info.permission}</code>\n`
