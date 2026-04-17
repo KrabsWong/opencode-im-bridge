@@ -103,8 +103,9 @@ function markdownToTelegramHtml(markdown: string): string {
   const inlineCodes: string[] = []
   const tables: string[] = []
   
-  // Extract code blocks (```...```)
-  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
+  // Extract code blocks (```lang\ncode``` or ```\ncode```)
+  // Pattern: ``` followed by optional language identifier and newline, then content until ```
+  html = html.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
     const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`
     // Escape HTML in code block
     const escapedCode = code
@@ -142,9 +143,11 @@ function markdownToTelegramHtml(markdown: string): string {
   html = html.replace(/\*\*([^\*]+)\*\*/g, "<b>$1</b>")
   html = html.replace(/__([^_]+)__/g, "<b>$1</b>")
   
-  // Italic: *text* or _text_ → <i>text</i> (but not ** or __)
-  html = html.replace(/(?<!\*)\*(?!\*)([^\*]+)(?<!\*)\*(?!\*)/g, "<i>$1</i>")
-  html = html.replace(/(?<!_)_(?!_)([^_]+)(?<!_)_(?!_)/g, "<i>$1</i>")
+  // Italic: *text* or _text_ → <i>text</i>
+  // Process italic BEFORE bold to avoid conflicts
+  // Match single asterisk/underscore not surrounded by the same character
+  html = html.replace(/([^*]|^)\*([^*]+)\*([^*]|$)/g, "$1<i>$2</i>$3")
+  html = html.replace(/([^_]|^)_([^_]+)_([^_]|$)/g, "$1<i>$2</i>$3")
   
   // Strikethrough: ~~text~~ → <s>text</s>
   html = html.replace(/~~([^~]+)~~/g, "<s>$1</s>")
