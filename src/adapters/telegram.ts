@@ -11,6 +11,82 @@ import { IMBridgeLogger } from "../core/bridge.js"
 const adapterLogger = new IMBridgeLogger(".opencode/im-bridge-adapter.log")
 
 /**
+ * Convert Markdown table to Telegram-compatible <pre> format with aligned columns
+ */
+function markdownTableToTelegramPre(tableText: string): string {
+  const lines = tableText.trim().split('\n')
+  if (lines.length < 2) return tableText
+  
+  // Parse rows
+  const rows: string[][] = []
+  for (const line of lines) {
+    const cells = line
+      .split('|')
+      .map(cell => cell.trim())
+      .filter(cell => cell.length > 0)
+    if (cells.length > 0) {
+      rows.push(cells)
+    }
+  }
+  
+  if (rows.length < 2) return tableText
+  
+  // Remove separator row (---|---|---)
+  const dataRows = rows.filter((row, index) => {
+    if (index === 0) return true // Keep header
+    return !row.every(cell => /^[-:]+$/.test(cell)) // Filter out separator rows
+  })
+  
+  if (dataRows.length < 1) return tableText
+  
+  // Calculate column widths
+  const colCount = Math.max(...dataRows.map(row => row.length))
+  const colWidths: number[] = new Array(colCount).fill(0)
+  
+  for (const row of dataRows) {
+    for (let i = 0; i < row.length; i++) {
+      // Calculate display width (simple: length for ASCII, double for CJK)
+      const displayWidth = [...row[i]].reduce((acc, char) => {
+        // CJK characters are roughly 2x width
+        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
+      }, 0)
+      colWidths[i] = Math.max(colWidths[i], displayWidth)
+    }
+  }
+  
+  // Pad columns and build table
+  const formattedRows: string[] = []
+  
+  for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
+    const row = dataRows[rowIndex]
+    const paddedCells: string[] = []
+    
+    for (let i = 0; i < colCount; i++) {
+      const cell = row[i] || ''
+      const width = colWidths[i]
+      
+      // Calculate padding needed
+      const cellWidth = [...cell].reduce((acc, char) => {
+        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
+      }, 0)
+      const padding = width - cellWidth
+      
+      paddedCells.push(cell + ' '.repeat(Math.max(0, padding)))
+    }
+    
+    formattedRows.push(paddedCells.join(' │ '))
+    
+    // Add separator after header
+    if (rowIndex === 0) {
+      const separator = colWidths.map(w => '─'.repeat(w)).join('─┼─')
+      formattedRows.push(separator)
+    }
+  }
+  
+  return `<pre>${formattedRows.join('\n')}</pre>`
+}
+
+/**
  * Convert Markdown to Telegram HTML subset
  * Telegram supports: <b>, <i>, <u>, <s>, <a>, <code>, <pre>
  */
@@ -25,6 +101,7 @@ function markdownToTelegramHtml(markdown: string): string {
   // Store code blocks and inline code to protect them from other transformations
   const codeBlocks: string[] = []
   const inlineCodes: string[] = []
+  const tables: string[] = []
   
   // Extract code blocks (```...```)
   html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
@@ -35,6 +112,15 @@ function markdownToTelegramHtml(markdown: string): string {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
     codeBlocks.push(escapedCode)
+    return placeholder
+  })
+  
+  // Extract tables (| col1 | col2 |)
+  // Table pattern: line starting with |, at least one |, and optional separator line
+  const tablePattern = /(\|[^\n]+\|\n\|[-:|\s]+\|\n(?:\|[^\n]+\|\n?)+)/g
+  html = html.replace(tablePattern, (match) => {
+    const placeholder = `\x00TABLE${tables.length}\x00`
+    tables.push(markdownTableToTelegramPre(match))
     return placeholder
   })
   
@@ -101,6 +187,11 @@ function markdownToTelegramHtml(markdown: string): string {
   // Restore links
   links.forEach((link, i) => {
     html = html.replace(`\x00LINK${i}\x00`, link)
+  })
+  
+  // Restore tables (before code blocks since tables might contain <pre>)
+  tables.forEach((table, i) => {
+    html = html.replace(`\x00TABLE${i}\x00`, table)
   })
   
   // Restore code blocks
