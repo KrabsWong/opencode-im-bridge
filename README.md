@@ -6,7 +6,8 @@
 
 - **双向通信**: 从 IM 接收问题、发送回复，向 OpenCode 发送消息
 - **权限审批**: 在 IM 中审批 OpenCode 的权限请求
-- **状态查询**: 随时查询会话状态和进度
+- **会话管理**: 查看活动会话、切换会话、向指定会话发送消息
+- **Markdown 渲染**: 自动将 Markdown 转换为 Telegram HTML，支持表格、代码块等
 - **多平台支持**: Telegram、Slack、Discord（可扩展）
 - **灵活配置**: 自定义消息模板、权限控制、功能开关
 
@@ -14,7 +15,7 @@
 
 | 平台 | 状态 | 特性 |
 |------|------|------|
-| Telegram | ✅ 可用 | 按钮、Markdown、Webhook/Long Polling |
+| Telegram | ✅ 可用 | 按钮、Markdown→HTML 转换、表格支持、Webhook/Long Polling |
 | Slack | 🚧 计划中 | Block Kit、Slash Commands |
 | Discord | 🚧 计划中 | 内嵌按钮、Rich Embed |
 
@@ -114,8 +115,6 @@ opencode
   templates?: {
     question?: (info: QuestionInfo) => string
     permission?: (info: PermissionInfo) => string
-    status?: (sessions: SessionInfo[]) => string
-    welcome?: () => string
     help?: () => string
   }
   
@@ -123,9 +122,7 @@ opencode
   features?: {
     questions?: boolean      // 启用问题通知
     permissions?: boolean    // 启用权限请求
-    statusQuery?: boolean    // 启用状态查询
     directMessaging?: boolean // 启用直接消息
-    autoStatus?: boolean     // 自动回复状态
   }
   
   // 会话选择策略
@@ -182,11 +179,15 @@ OpenCode 执行编辑
 ### 场景 3: 主动查询和发送
 
 ```
-用户: /status
+用户: /sessions
     ↓
 Telegram → OpenCode (session.list)
     ↓
-返回会话状态
+返回活动会话列表（带选择按钮）
+
+用户: /use <sessionId>
+    ↓
+选择特定会话
 
 用户: /ask 现在进度如何？
     ↓
@@ -249,7 +250,8 @@ export class MyCustomAdapter implements IMAdapter {
 {
   "templates": {
     "question": "(info) => `🤔 **${info.questions[0].header}**\\n\\n${info.questions[0].question}`",
-    "status": "(sessions) => sessions.map(s => `📊 ${s.id}: ${s.completedCount}/${s.todoCount}`).join('\\n')"
+    "permission": "(info) => `🔒 **权限请求**\\n\\n工具: ${info.permission}`",
+    "help": "() => `欢迎使用 IM Bridge`"
   }
 }
 ```
@@ -270,56 +272,65 @@ export class MyCustomAdapter implements IMAdapter {
   "features": {
     "questions": true,        // 接收问题通知
     "permissions": true,      // 接收权限请求
-    "statusQuery": true,      // 允许查询状态
-    "directMessaging": true,  // 允许直接发消息
-    "autoStatus": false       // 关闭自动状态回复
+    "directMessaging": true   // 允许直接发消息
   }
 }
 ```
 
 ## 架构设计
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    IM Platform                              │
-│              (Telegram / Slack / Discord)                    │
-└───────────────────┬─────────────────────────────────────────┘
-                    │ HTTP/WebSocket
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Platform Adapter                               │
-│     (TelegramAdapter / SlackAdapter / ...)                  │
-└───────────────────┬─────────────────────────────────────────┘
-                    │ Unified Interface
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   IM Bridge Core                            │
-│     • Message routing                                       │
-│     • State management                                      │
-│     • Command handling                                      │
-│     • Event translation                                     │
-└───────────────────┬─────────────────────────────────────────┘
-                    │ OpenCode Plugin API
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   OpenCode Core                             │
-│     • Question Service                                      │
-│     • Permission Service                                    │
-│     • Session Management                                    │
-│     • Event Bus                                             │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph IM["IM Platform"]
+        TG["Telegram Bot"]
+        SL["Slack (planned)"]
+        DC["Discord (planned)"]
+    end
+
+    subgraph Adapter["Platform Adapter Layer"]
+        TA["TelegramAdapter"]
+    end
+
+    subgraph Core["IM Bridge Core"]
+        MR["Message Routing"]
+        SM["State Management"]
+        CH["Command Handling"]
+        ET["Event Translation"]
+    end
+
+    subgraph OC["OpenCode Core"]
+        QS["Question Service"]
+        PS["Permission Service"]
+        SesM["Session Management"]
+    end
+
+    TG <-->|"HTTP API / Webhook"| TA
+    SL -.->|"planned"| Adapter
+    DC -.->|"planned"| Adapter
+
+    TA <-->|"Unified Interface"| Core
+
+    MR <-->|"Plugin API"| OC
+    SM -.->|"manages"| MR
+    CH -.->|"handles"| MR
+    ET -.->|"translates"| MR
+
+    style IM fill:#e1f5fe
+    style Adapter fill:#fff3e0
+    style Core fill:#e8f5e9
+    style OC fill:#fce4ec
 ```
 
 ## 开发计划
 
 - [x] Core bridge architecture
 - [x] Telegram adapter
+- [x] Markdown to Telegram HTML conversion
+- [x] Markdown table support
 - [ ] Slack adapter
 - [ ] Discord adapter
 - [ ] Message queue persistence
-- [ ] Multi-session support
 - [ ] Rate limiting
-- [ ] Message threading
 
 ## 贡献指南
 
