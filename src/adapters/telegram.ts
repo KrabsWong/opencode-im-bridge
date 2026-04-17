@@ -259,6 +259,20 @@ function markdownToTelegramHtml(markdown: string): string {
   // Parse markdown
   let result: string = marked.parse(html) as string
   
+  // Convert unsupported HTML tags to Telegram-compatible ones
+  // marked uses <strong> and <em> but Telegram needs <b> and <i>
+  result = result
+    .replace(/<strong>/g, "<b>")
+    .replace(/<\/strong>/g, "</b>")
+    .replace(/<em>/g, "<i>")
+    .replace(/<\/em>/g, "</i>")
+  
+  // Remove <p> tags (Telegram doesn't support them)
+  // But preserve the content and line breaks
+  result = result
+    .replace(/<p>/g, "")
+    .replace(/<\/p>\n?/g, "\n\n")
+  
   // Restore tables
   tables.forEach((table, i) => {
     result = result.replace(`\x00TABLE${i}\x00`, table)
@@ -387,7 +401,9 @@ export class TelegramAdapter implements IMAdapter {
     // Convert Markdown to HTML if parseMode is html
     let text = message.text
     if (message.parseMode === "html") {
+      adapterLogger.debug(`[TelegramAdapter] Original text: ${text.substring(0, 200)}`)
       text = markdownToTelegramHtml(text)
+      adapterLogger.debug(`[TelegramAdapter] Converted text: ${text.substring(0, 200)}`)
     }
     
     const body: Record<string, unknown> = {
