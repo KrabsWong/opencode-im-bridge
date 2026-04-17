@@ -246,6 +246,9 @@ export class IMBridge {
 <b>session_interrupt</b>
 立即中断当前正在执行的 AI 任务，等同于在 TUI 中按 Ctrl+C。适用于 AI 陷入死循环或响应时间过长的情况。
 
+<b>📝 生成标题</b>
+AI 自动分析对话内容并生成合适的会话标题，便于后续查找和管理。
+
 `
 
     const keyboard = [
@@ -255,6 +258,9 @@ export class IMBridge {
       ],
       [
         { text: "session_interrupt", callbackData: "tui_command:session_interrupt" },
+      ],
+      [
+        { text: "📝 生成标题", callbackData: "tui_command:autotitle" },
       ],
     ]
 
@@ -269,9 +275,15 @@ export class IMBridge {
    * Handle TUI command callback from button click
    */
   private async handleTuiCommandCallback(userId: string, command: string): Promise<void> {
+    // Handle autotitle separately
+    if (command === "autotitle") {
+      await this.executeAutotitle(userId)
+      return
+    }
+
     // Map is now 1:1 with API names
     const validCommands = ["session_compact", "session_new", "session_interrupt"]
-    
+
     if (validCommands.includes(command)) {
       await this.executeTuiCommand(command, userId)
     } else {
@@ -297,7 +309,8 @@ export class IMBridge {
 
       // Special handling for session_new - directly create session and get ID
       if (command === "session_new") {
-        const result = await this.input.client.session.create({
+        const result = await client.post({
+          url: `/session`,
           body: {
             title: `Remote session ${new Date().toLocaleString("zh-CN")}`,
           },
@@ -368,6 +381,98 @@ export class IMBridge {
         parseMode: "html",
       })
     }
+  }
+
+  /**
+   * Execute autotitle command - AI generates session title
+   */
+  private async executeAutotitle(userId: string): Promise<void> {
+    try {
+      const mapping = this.sessionMappings.get(userId)
+      if (!mapping) {
+        await this.sendMessage({
+          text: "<b>❌ 未选择会话</b>\n\n请先使用 /sessions 选择要生成标题的会话",
+          parseMode: "html"
+        })
+        return
+      }
+
+      const sessionId = mapping.sessionId
+
+      // Send "generating" hint
+      await this.sendMessage({
+        text: `<b>📝 正在生成标题...</b>\n分析会话内容，请稍候`,
+        parseMode: "html"
+      })
+
+      // Call AI to generate title
+      const result = await this.input.client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{
+            type: "text",
+            text: `[system] 请根据我们的对话内容，生成一个简洁的会话标题（10-20字）。
+要求：
+1. 准确概括对话核心主题或任务
+2. 简洁明了，便于后续查找
+3. 只返回标题文字本身，不要有引号、解释或格式`
+          }]
+        }
+      })
+
+      if (result.error) {
+        throw new Error(`生成失败: ${JSON.stringify(result.error)}`)
+      }
+
+      // Extract generated title
+      const generatedTitle = this.extractTextFromAIResponse(result.data)
+
+      if (!generatedTitle || generatedTitle.length < 2) {
+        throw new Error("AI 未能生成有效标题")
+      }
+
+      // Update session title using underlying client
+      const client = (this.input.client as any)._client || this.input.client
+      const updateResult = await client.patch({
+        url: `/session/${sessionId}`,
+        body: { title: generatedTitle }
+      })
+
+      if (updateResult.error) {
+        throw new Error(`更新标题失败: ${JSON.stringify(updateResult.error)}`)
+      }
+
+      // Notify user
+      await this.sendMessage({
+        text: `<b>✅ 标题已更新</b>\n━━━━━━━━━━━━━━\n新标题：<b>${this.escapeHtml(generatedTitle)}</b>`,
+        parseMode: "html"
+      })
+
+      this.logger.info(`Session title auto-generated: ${sessionId} -> "${generatedTitle}"`)
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      this.logger.error(`Error executing autotitle`, error)
+      await this.sendMessage({
+        text: `<b>❌ 生成标题失败</b>\n━━━━━━━━━━━━━━\n错误：${this.escapeHtml(errorMsg)}`,
+        parseMode: "html"
+      })
+    }
+  }
+
+  /**
+   * Extract text from AI response
+   */
+  private extractTextFromAIResponse(data: any): string {
+    if (!data) return ""
+
+    // Try different response formats
+    const text = data.info?.content ||
+      data.parts?.filter((p: any) => p.type === "text").map((p: any) => p.text).join("") ||
+      data.text ||
+      ""
+
+    return text.trim()
   }
 
   /**
