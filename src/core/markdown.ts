@@ -17,12 +17,13 @@ export function escapeHtml(text: string): string {
 }
 
 /**
- * Convert Markdown table to Telegram-compatible <pre> format with aligned columns
+ * Convert Markdown table to Telegram HTML table
+ * Uses <table>, <tr>, <td>, <th> tags for proper alignment
  */
-function markdownTableToTelegramPre(tableText: string): string {
+function markdownTableToTelegramHtml(tableText: string): string {
   const lines = tableText.trim().split('\n')
   if (lines.length < 2) return tableText
-  
+
   // Parse rows
   const rows: string[][] = []
   for (const line of lines) {
@@ -34,62 +35,40 @@ function markdownTableToTelegramPre(tableText: string): string {
       rows.push(cells)
     }
   }
-  
+
   if (rows.length < 2) return tableText
-  
+
   // Remove separator row (---|---|---)
   const dataRows = rows.filter((row, index) => {
     if (index === 0) return true // Keep header
     return !row.every(cell => /^[-:]+$/.test(cell)) // Filter out separator rows
   })
-  
+
   if (dataRows.length < 1) return tableText
-  
-  // Calculate column widths
-  const colCount = Math.max(...dataRows.map(row => row.length))
-  const colWidths: number[] = new Array(colCount).fill(0)
-  
-  for (const row of dataRows) {
-    for (let i = 0; i < row.length; i++) {
-      // Calculate display width (simple: length for ASCII, double for CJK)
-      const displayWidth = [...row[i]].reduce((acc, char) => {
-        // CJK characters are roughly 2x width
-        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
-      }, 0)
-      colWidths[i] = Math.max(colWidths[i], displayWidth)
-    }
+
+  // Build HTML table
+  let html = '<table>'
+
+  // Header row
+  html += '<tr>'
+  const headerRow = dataRows[0]
+  for (const cell of headerRow) {
+    html += `<th><b>${escapeHtml(cell)}</b></th>`
   }
-  
-  // Pad columns and build table
-  const formattedRows: string[] = []
-  
-  for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-    const row = dataRows[rowIndex]
-    const paddedCells: string[] = []
-    
-    for (let i = 0; i < colCount; i++) {
-      const cell = row[i] || ''
-      const width = colWidths[i]
-      
-      // Calculate padding needed
-      const cellWidth = [...cell].reduce((acc, char) => {
-        return acc + (char.charCodeAt(0) > 127 ? 2 : 1)
-      }, 0)
-      const padding = width - cellWidth
-      
-      paddedCells.push(cell + ' '.repeat(Math.max(0, padding)))
+  html += '</tr>'
+
+  // Data rows
+  for (let i = 1; i < dataRows.length; i++) {
+    html += '<tr>'
+    const row = dataRows[i]
+    for (const cell of row) {
+      html += `<td>${escapeHtml(cell)}</td>`
     }
-    
-    formattedRows.push(paddedCells.join(' │ '))
-    
-    // Add separator after header
-    if (rowIndex === 0) {
-      const separator = colWidths.map(w => '─'.repeat(w)).join('─┼─')
-      formattedRows.push(separator)
-    }
+    html += '</tr>'
   }
-  
-  return `<pre>${formattedRows.join('\n')}</pre>`
+
+  html += '</table>'
+  return html
 }
 
 /**
@@ -123,7 +102,7 @@ export function markdownToTelegramHtml(markdown: string): string {
       parts.push({ type: 'text', content: markdown.slice(lastTableIndex, tableMatch.index) })
     }
     // Add table
-    parts.push({ type: 'table', content: markdownTableToTelegramPre(tableMatch[0]) })
+    parts.push({ type: 'table', content: markdownTableToTelegramHtml(tableMatch[0]) })
     lastTableIndex = tableMatch.index + tableMatch[0].length
   }
   
