@@ -838,7 +838,7 @@ export class IMBridge {
       // Send the AI response (only if there's content left after removing image markers)
       if (displayResponse.trim()) {
         await this.sendMessage({
-          text: `<b>AI 回复</b>\n\n${this.escapeHtml(displayResponse)}`,
+          text: `<b>AI 回复</b>\n\n${displayResponse}`,
           parseMode: "html",
         })
       }
