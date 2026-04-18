@@ -18,6 +18,13 @@ interface PendingRequest {
   sessionId: string
   messageId?: string
   timestamp: number
+  // Permission-specific fields to preserve original request info
+  permissionInfo?: {
+    permission: string
+    patterns: string[]
+    sessionTitle: string
+    sessionDirectory: string
+  }
 }
 
 interface SessionMapping {
@@ -1266,6 +1273,12 @@ AI 自动分析对话内容并生成合适的会话标题，便于后续查找�
         sessionId: info.sessionId,
         messageId: result.messageId,
         timestamp: Date.now(),
+        permissionInfo: {
+          permission: info.permission,
+          patterns: info.patterns,
+          sessionTitle,
+          sessionDirectory,
+        },
       })
 
       this.messageHistory.set(info.id, result.messageId)
@@ -1456,17 +1469,33 @@ ID: <code>${sessionId}</code>
 
       this.logger.info(`Permission reply successful for ${requestId}`)
 
-      // Update message
+      // Update message with full permission info preserved
       const messageId = this.messageHistory.get(requestId)
       if (messageId && this.adapter.editMessage) {
         const statusText = value === "once"
-          ? "[允许一次]"
+          ? "✅ [允许一次]"
           : value === "always"
-            ? "[总是允许]"
-            : "[已拒绝]"
+            ? "🔓 [总是允许]"
+            : "❌ [已拒绝]"
+
+        // Retrieve original permission info
+        const permInfo = pending.permissionInfo
+        let updatedText = `${statusText}\n━━━━━━━━━━━━━━━━━━━━\n请求 ID: <code>${requestId}</code>`
+
+        if (permInfo) {
+          updatedText = `<code>${pending.sessionId}</code>:${this.escapeHtml(permInfo.sessionTitle)}\n` +
+            `${statusText}\n` +
+            `<b>工作目录:</b> <code>${this.escapeHtml(permInfo.sessionDirectory)}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `<b>请求工具:</b> <code>${permInfo.permission}</code>\n` +
+            `<b>路径:</b>\n` +
+            permInfo.patterns.map((p, i) => `${i + 1}. <code>${p}</code>`).join('\n') + '\n' +
+            `━━━━━━━━━━━━━━━━━━━━\n` +
+            `请求 ID: <code>${requestId}</code>`
+        }
 
         await this.adapter.editMessage(messageId, {
-          text: `${statusText}\n━━━━━━━━━━━━━━━━━━━━\n请求 ID: <code>${requestId}</code>`,
+          text: updatedText,
           parseMode: "html",
         })
       }
