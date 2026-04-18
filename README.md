@@ -10,7 +10,7 @@
 - **AI 生成标题**: 一键让 AI 分析对话内容并自动生成合适的会话标题
 - **远程控制**: 通过 Telegram 按钮执行 OpenCode 内部命令（compact、interrupt、新建会话等）
 - **Markdown 渲染**: 自动将 Markdown 转换为 Telegram HTML，支持表格、代码块等
-- **多平台支持**: Telegram、Slack、Discord（可扩展）
+- **多平台支持**: Telegram（Slack、Discord 暂无计划）
 - **灵活配置**: 自定义消息模板、权限控制、功能开关
 
 ## 支持的 IM 平台
@@ -18,8 +18,8 @@
 | 平台 | 状态 | 特性 |
 |------|------|------|
 | Telegram | ✅ 可用 | 按钮、Markdown→HTML 转换、表格支持、Webhook/Long Polling |
-| Slack | 🚧 计划中 | Block Kit、Slash Commands |
-| Discord | 🚧 计划中 | 内嵌按钮、Rich Embed |
+| Slack | ❌ 暂无计划 | - |
+| Discord | ❌ 暂无计划 | - |
 
 ## 快速开始
 
@@ -272,8 +272,6 @@ export class MyCustomAdapter implements IMAdapter {
 flowchart TB
     subgraph IM["IM Platform"]
         TG["Telegram Bot"]
-        SL["Slack (计划中)"]
-        DC["Discord (计划中)"]
     end
 
     subgraph Adapter["平台适配器层"]
@@ -294,8 +292,7 @@ flowchart TB
     end
 
     TG <-->|"HTTP API / Webhook"| TA
-    SL -.->|"计划中"| Adapter
-    DC -.->|"计划中"| Adapter
+
 
     TA <-->|"统一接口"| Core
 
@@ -318,8 +315,7 @@ flowchart TB
 - [x] Markdown table support
 - [x] AI 自动生成会话标题
 - [x] 远程控制面板 (/cmd)
-- [ ] Slack adapter
-- [ ] Discord adapter
+
 - [ ] Message queue persistence
 - [ ] Rate limiting
 
