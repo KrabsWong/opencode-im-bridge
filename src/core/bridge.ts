@@ -11,6 +11,7 @@ import type {
 import type { PluginInput } from "@opencode-ai/plugin"
 import { IMBridgeLogger } from "./logger.js"
 import { markdownToTelegramHtml } from "./markdown.js"
+import { markdownToEntities, splitEntities, utf16Length, type MarkdownConvertResult } from "./markdown-entities.js"
 
 interface PendingRequest {
   type: "question" | "permission"
@@ -763,17 +764,6 @@ AI 自动分析对话内容并生成合适的会话标题，便于后续查找�
         text: "获取会话列表失败: " + (error instanceof Error ? error.message : String(error))
       })
     }
-  }
-  
-  /**
-   * Escape HTML special characters
-   */
-  private escapeHtml(text: string): string {
-    if (!text) return ""
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
   }
   
   /**
@@ -1634,5 +1624,80 @@ ID: <code>${sessionId}</code>
       // Re-throw other errors
       throw error
     }
+  }
+  
+  /**
+   * 使用 Entities 模式发送 Markdown 消息（推荐）
+   * 将 Markdown 转换为纯文本 + Entities，避免转义问题
+   * 
+   * @param prefix 消息前缀（如会话标识）
+   * @param title 标题（如 "蟹老板说"）
+   * @param markdownContent Markdown 内容
+   * @param options 额外选项
+   */
+  private async sendMarkdownWithEntities(
+    prefix: string,
+    title: string,
+    markdownContent: string,
+    options?: {
+      keyboard?: IMOutgoingMessage['keyboard']
+      editMessageId?: string
+    }
+  ): Promise<void> {
+    // 1. 转换 Markdown 为 entities
+    const result = markdownToEntities(markdownContent)
+    
+    // 2. 构建完整消息
+    const prefixPart = prefix ? prefix + '\n' : ''
+    const titlePart = title ? title + '\n\n' : ''
+    const fullText = prefixPart + titlePart + result.text
+    
+    // 3. 调整 entities 偏移（添加前缀长度）
+    const prefixOffset = utf16Length(prefixPart) + utf16Length(titlePart)
+    const adjustedEntities = result.entities.map(ent => ({
+      ...ent,
+      offset: ent.offset + prefixOffset
+    }))
+    
+    // 4. 分割长消息（Telegram 限制 4096 UTF-16 字符）
+    const chunks = splitEntities(fullText, adjustedEntities, 4096)
+    
+    // 5. 发送消息
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const isFirstChunk = i === 0
+      const isLastChunk = i === chunks.length - 1
+      
+      const message: IMOutgoingMessage = {
+        text: chunk.text,
+        parseMode: 'entities',
+        entities: chunk.entities,
+      }
+      
+      // 只在最后一个块添加键盘
+      if (isLastChunk && options?.keyboard) {
+        message.keyboard = options.keyboard
+      }
+      
+      if (isFirstChunk && options?.editMessageId && this.adapter.editMessage) {
+        // 编辑现有消息
+        await this.adapter.editMessage(options.editMessageId, message)
+      } else {
+        // 发送新消息
+        await this.sendMessage(message)
+      }
+    }
+  }
+
+  /**
+   * Escape HTML special characters
+   */
+  private escapeHtml(text: string): string {
+    if (!text) return ""
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
   }
 }

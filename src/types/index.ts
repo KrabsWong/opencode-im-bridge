@@ -40,10 +40,26 @@ export interface IMKeyboard {
   inline: IMButton[][]
 }
 
+/**
+ * Telegram Entity 类型（用于 entities 模式发送）
+ */
+export interface TelegramEntity {
+  type: 'bold' | 'italic' | 'code' | 'pre' | 'text_link' | 'strikethrough' | 'blockquote' | 'underline' | 'spoiler'
+  offset: number
+  length: number
+  url?: string
+  language?: string
+}
+
 export interface IMOutgoingMessage {
   text: string
   keyboard?: IMKeyboard
-  parseMode?: "markdown" | "html" | "plain"
+  parseMode?: "markdown" | "html" | "plain" | "entities"
+  /**
+   * 当 parseMode 为 "entities" 时使用
+   * 绕过 parse_mode，直接发送 text + entities
+   */
+  entities?: TelegramEntity[]
 }
 
 /**
