@@ -16,6 +16,16 @@ export interface UserContext {
   lastActivity: number
 }
 
+// 最近使用的实例+会话组合
+export interface RecentCombo {
+  instanceId: string      // 实例 ID（工作目录路径）
+  instanceName: string    // 实例显示名称（目录名）
+  sessionId: string       // 会话 ID
+  sessionTitle: string    // 会话标题
+  lastUsedAt: number      // 最后使用时间戳
+  useCount: number        // 使用次数（用于排序）
+}
+
 export interface HubMessage {
   type: 'register' | 'unregister' | 'request' | 'response' | 'event' | 'ping' | 'pong' | 'error' | 'registered'
   requestId?: string

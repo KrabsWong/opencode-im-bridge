@@ -1,5 +1,5 @@
 import type { InstanceRegistry } from '../server/websocket-server.js'
-import type { IMAdapter, IMMessage, IMCallbackQuery, IMOutgoingMessage, IMKeyboard } from '../types/index.js'
+import type { IMAdapter, IMMessage, IMCallbackQuery, IMOutgoingMessage, IMKeyboard, RecentCombo } from '../types/index.js'
 import { markdownToEntities, splitEntities } from '../core/markdown-entities.js'
 
 // 正在处理的消息信息
@@ -12,6 +12,12 @@ interface PendingMessage {
   timestamp: number
 }
 
+// /go 命令消息上下文（用于原地更新）
+interface GoMessageContext {
+  chatId: number
+  messageId: string
+}
+
 export class MessageRouter {
   private registry: InstanceRegistry
   private adapter: IMAdapter
@@ -19,6 +25,9 @@ export class MessageRouter {
   private allowedChats: Set<string>
   private pendingMessages: Map<string, PendingMessage> = new Map() // messageId -> info
   private userChatMap: Map<string, number> = new Map() // userId -> chatId
+  private userRecentCombos: Map<string, RecentCombo[]> = new Map() // userId -> combos
+  private goMessageContexts: Map<string, GoMessageContext> = new Map() // userId -> context
+  private readonly MAX_RECENT_COMBOS = 5
 
   constructor(
     registry: InstanceRegistry,
@@ -43,6 +52,64 @@ export class MessageRouter {
         this.pendingMessages.delete(id)
       }
     }
+  }
+
+  // 记录最近使用的组合
+  private recordRecentCombo(userId: string, instanceId: string, instanceName: string, sessionId: string, sessionTitle: string): void {
+    let combos = this.userRecentCombos.get(userId) || []
+    
+    // 查找是否已存在相同组合
+    const existingIndex = combos.findIndex(c => 
+      c.instanceId === instanceId && c.sessionId === sessionId
+    )
+    
+    if (existingIndex >= 0) {
+      // 更新已存在的组合
+      combos[existingIndex].lastUsedAt = Date.now()
+      combos[existingIndex].useCount++
+      // 移到最前面
+      const combo = combos.splice(existingIndex, 1)[0]
+      combos.unshift(combo)
+    } else {
+      // 添加新组合
+      combos.unshift({
+        instanceId,
+        instanceName,
+        sessionId,
+        sessionTitle,
+        lastUsedAt: Date.now(),
+        useCount: 1
+      })
+      
+      // 限制数量
+      if (combos.length > this.MAX_RECENT_COMBOS) {
+        combos = combos.slice(0, this.MAX_RECENT_COMBOS)
+      }
+    }
+    
+    this.userRecentCombos.set(userId, combos)
+  }
+
+  // 获取用户可用的最近组合（过滤掉已断开的实例）
+  private getAvailableRecentCombos(userId: string): RecentCombo[] {
+    const allCombos = this.userRecentCombos.get(userId) || []
+    const connectedInstanceIds = new Set(this.registry.getAllInstances().map(i => i.id))
+    
+    // 只返回实例仍然在线的组合
+    return allCombos.filter(combo => connectedInstanceIds.has(combo.instanceId))
+  }
+
+  // 生成组合按钮文本
+  private generateComboButtonText(combo: RecentCombo): string {
+    // 缩写：实例名取前 8 字符，会话名取前 10 字符
+    const instAbbr = combo.instanceName.length > 8 
+      ? combo.instanceName.slice(0, 6) + '..' 
+      : combo.instanceName
+    const sessAbbr = combo.sessionTitle.length > 10 
+      ? combo.sessionTitle.slice(0, 8) + '..' 
+      : combo.sessionTitle
+    
+    return `${instAbbr}|${sessAbbr}`
   }
 
   // 检查用户是否有权限
@@ -141,6 +208,16 @@ export class MessageRouter {
 
         this.registry.setUserSession(callback.user.id, sessionId)
 
+        // 获取会话标题并记录到最近组合
+        const sessionTitle = await this.getSessionTitle(userInstance.id, sessionId)
+        this.recordRecentCombo(
+          callback.user.id,
+          userInstance.id,
+          userInstance.workspace.split('/').pop() || userInstance.id,
+          sessionId,
+          sessionTitle
+        )
+
         if ('answerCallbackQuery' in this.adapter) {
           await (this.adapter as any).answerCallbackQuery(callback.id, `已选择 session`)
         }
@@ -165,6 +242,20 @@ export class MessageRouter {
       case 'permission':
         // 权限回复，转发到对应实例
         await this.handlePermissionReply(callback.user.id, parts[1], parts[2] as 'once' | 'always' | 'reject')
+        break
+
+      case 'select_combo':
+        // 选择组合（实例+会话）
+        const comboInstanceId = parts[1]
+        const comboSessionId = parts[2]
+        await this.handleSelectCombo(
+          callback.user.id, 
+          comboInstanceId, 
+          comboSessionId, 
+          callback.id, 
+          callback.chatId,
+          callback.messageId
+        )
         break
     }
   }
@@ -209,6 +300,10 @@ export class MessageRouter {
         await this.sendCommandPanel(userId, chatId)
         break
 
+      case '/go':
+        await this.showRecentCombos(userId, chatId)
+        break
+
       default:
         await this.sendMessage({
           chatId,
@@ -228,6 +323,7 @@ export class MessageRouter {
 /instances - 列出所有连接的实例
 /use <id> - 选择实例
 /sessions - 列出当前实例的所有 sessions
+/go - 快速切换到最近使用的会话
 /current - 查看当前选中的实例和 session
 /cmd - 打开远程控制面板
 /help - 显示此帮助
@@ -238,6 +334,9 @@ export class MessageRouter {
 3. 使用 /sessions 查看该实例的 sessions
 4. 点击按钮选择 session
 5. 直接发送消息与选中的 session 交互
+
+**快速切换：**
+使用 /go 可快速切换到最近使用过的 5 个会话组合
     `.trim()
 
     await this.sendMessage({
@@ -288,6 +387,53 @@ export class MessageRouter {
       text,
       parseMode: 'entities',
       replyMarkup: keyboard
+    })
+  }
+
+  // 显示最近使用的组合
+  private async showRecentCombos(userId: string, chatId: number): Promise<void> {
+    const availableCombos = this.getAvailableRecentCombos(userId)
+
+    if (availableCombos.length === 0) {
+      await this.sendMessage({
+        chatId,
+        text: '🚀 **快速切换**\n\n暂无最近使用的会话组合。\n\n请先使用 /instances 开始。',
+        parseMode: 'entities'
+      })
+      return
+    }
+
+    let text = '🚀 **快速切换**\n\n点击按钮快速切换到对应会话：\n\n'
+
+    const keyboard: IMKeyboard = { inline: [] }
+
+    // 每行放 2 个按钮
+    for (let i = 0; i < availableCombos.length; i += 2) {
+      const row: typeof keyboard.inline[0] = []
+
+      for (let j = i; j < Math.min(i + 2, availableCombos.length); j++) {
+        const combo = availableCombos[j]
+        const buttonText = this.generateComboButtonText(combo)
+        row.push({
+          text: buttonText,
+          callbackData: `select_combo:${combo.instanceId}:${combo.sessionId}`
+        })
+      }
+
+      keyboard.inline.push(row)
+    }
+
+    const result = await this.sendMessage({
+      chatId,
+      text,
+      parseMode: 'entities',
+      replyMarkup: keyboard
+    })
+
+    // 保存消息上下文，用于后续原地更新
+    this.goMessageContexts.set(userId, {
+      chatId,
+      messageId: result.messageId
     })
   }
 
@@ -536,6 +682,15 @@ export class MessageRouter {
     // 获取 session 标题
     const sessionTitle = await this.getSessionTitle(instance.id, sessionId)
 
+    // 记录到最近组合
+    this.recordRecentCombo(
+      userId,
+      instance.id,
+      instance.workspace.split('/').pop() || instance.id,
+      sessionId,
+      sessionTitle
+    )
+
     // 构建消息前缀（分三行：instance、title、sessionId）
     const infoSection = `instance: ${instance.id}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\``
 
@@ -675,6 +830,67 @@ export class MessageRouter {
       })
     } catch (err) {
       console.error('Error sending permission reply:', err)
+    }
+  }
+
+  // 处理选择组合
+  private async handleSelectCombo(
+    userId: string, 
+    instanceId: string, 
+    sessionId: string, 
+    callbackId: string, 
+    chatId: number,
+    messageId?: string
+  ): Promise<void> {
+    // 检查实例是否仍然在线
+    const instance = this.registry.getInstance(instanceId)
+    if (!instance) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '实例已断开')
+      }
+      
+      // 原地更新消息，显示错误
+      if (messageId && this.adapter.editMessage) {
+        await this.adapter.editMessage(messageId, {
+          chatId,
+          text: '🚀 **快速切换**\n\n❌ 该实例已断开连接，请重新选择。',
+          parseMode: 'entities'
+        })
+      }
+      return
+    }
+
+    // 更新用户选择
+    this.registry.setUserInstance(userId, instanceId)
+    this.registry.setUserSession(userId, sessionId)
+
+    // 获取会话标题
+    const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
+
+    // 更新最近组合记录
+    this.recordRecentCombo(userId, instanceId, instance.workspace.split('/').pop() || instanceId, sessionId, sessionTitle)
+
+    if ('answerCallbackQuery' in this.adapter) {
+      await (this.adapter as any).answerCallbackQuery(callbackId, '切换成功')
+    }
+
+    // 构建选中状态的消息
+    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\ninstance: ${instanceId}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\``
+
+    // 原地更新消息
+    if (messageId && this.adapter.editMessage) {
+      await this.adapter.editMessage(messageId, {
+        chatId,
+        text: selectedText,
+        parseMode: 'entities'
+      })
+    } else {
+      // 如果无法编辑，发送新消息
+      await this.sendMessage({
+        chatId,
+        text: selectedText,
+        parseMode: 'entities'
+      })
     }
   }
 
