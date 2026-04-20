@@ -19,12 +19,22 @@ interface GoMessageContext {
   comboMap: Map<string, RecentCombo> // shortId -> combo
 }
 
+// 待处理的权限请求
+interface PendingPermission {
+  chatId: number
+  messageId: string
+  instanceId: string
+  sessionId: string
+  timestamp: number
+}
+
 export class MessageRouter {
   private registry: InstanceRegistry
   private adapter: IMAdapter
   private adminUsers: Set<string>
   private allowedChats: Set<string>
   private pendingMessages: Map<string, PendingMessage> = new Map() // messageId -> info
+  private pendingPermissions: Map<string, PendingPermission> = new Map() // requestId -> info
   private userChatMap: Map<string, number> = new Map() // userId -> chatId
   private userRecentCombos: Map<string, RecentCombo[]> = new Map() // userId -> combos
   private goMessageContexts: Map<string, GoMessageContext> = new Map() // userId -> context
@@ -51,6 +61,12 @@ export class MessageRouter {
     for (const [id, info] of this.pendingMessages.entries()) {
       if (now - info.timestamp > 600000) { // 10分钟过期
         this.pendingMessages.delete(id)
+      }
+    }
+    // 清理过期的 pending permissions
+    for (const [id, info] of this.pendingPermissions.entries()) {
+      if (now - info.timestamp > 600000) { // 10分钟过期
+        this.pendingPermissions.delete(id)
       }
     }
   }
@@ -899,12 +915,34 @@ export class MessageRouter {
       return
     }
 
+    // 获取 pending permission 信息
+    const pendingPermission = this.pendingPermissions.get(requestId)
+
     try {
       await this.registry.sendToInstance(instance.id, {
         type: 'permission_reply',
         requestId,
         value
       })
+
+      // 更新 Telegram 消息，移除按钮并显示处理结果
+      if (pendingPermission && this.adapter.editMessage) {
+        const statusText = value === 'once' ? '✅ 已允许（一次）' :
+                          value === 'always' ? '✅ 已允许（总是）' :
+                          '❌ 已拒绝'
+        const updatedText = `**INSTANCE:** \`${pendingPermission.instanceId}\`\n**SESSION ID:** \`${pendingPermission.sessionId}\`\n\n🦀 **蟹老板请求权限：**\n\n${statusText}`
+        const result = markdownToEntities(updatedText)
+
+        await this.adapter.editMessage(pendingPermission.messageId, {
+          chatId: pendingPermission.chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+
+        // 从 pending 中移除
+        this.pendingPermissions.delete(requestId)
+      }
     } catch (err) {
       console.error('Error sending permission reply:', err)
     }
@@ -1237,13 +1275,12 @@ export class MessageRouter {
         replyMarkup: keyboard
       })
 
-      // 保存到 pending messages
-      this.pendingMessages.set(id, {
+      // 保存到 pending permissions
+      this.pendingPermissions.set(id, {
         chatId,
         messageId: result.messageId,
         instanceId,
         sessionId,
-        sessionTitle,
         timestamp: Date.now()
       })
 
