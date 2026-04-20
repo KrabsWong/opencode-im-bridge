@@ -53,6 +53,90 @@ export class HubClient {
   }
 
   /**
+   * Generate intelligent title based on conversation messages
+   */
+  private generateSmartTitle(messages: any[]): string {
+    if (messages.length === 0) {
+      return 'New Session'
+    }
+
+    // Get first user message for context
+    const firstUserMessage = messages.find((m: any) => m.role === 'user')?.content || ''
+
+    // Extract key topics/keywords from all messages
+    const allContent = messages
+      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .map((m: any) => m.content)
+      .join(' ')
+
+    // Try to extract main topic from first user message
+    let title = this.extractMainTopic(firstUserMessage)
+
+    // If no clear topic found, try to extract from all content
+    if (!title || title.length < 3) {
+      title = this.extractMainTopic(allContent)
+    }
+
+    // Fallback to first message preview
+    if (!title || title.length < 3) {
+      title = firstUserMessage.slice(0, 40) || allContent.slice(0, 40) || 'New Session'
+    }
+
+    // Clean up title
+    title = title
+      .replace(/^[^\w\u4e00-\u9fa5]+/, '') // Remove leading non-word chars
+      .replace(/[\n\r]+/g, ' ') // Replace newlines with space
+      .trim()
+
+    // Truncate if too long
+    if (title.length > 50) {
+      title = title.slice(0, 47) + '...'
+    }
+
+    return title || 'New Session'
+  }
+
+  /**
+   * Extract main topic from text content
+   */
+  private extractMainTopic(content: string): string {
+    if (!content) return ''
+
+    // Common task keywords to look for
+    const taskPatterns = [
+      // Development tasks
+      /(?:implement|create|build|add|fix|update|refactor|optimize)\s+([\w\s-]+?)(?:\s+(?:for|in|to)\s+|$)/i,
+      // Question patterns
+      /(?:how\s+to|what\s+is|explain|help\s+(?:me\s+)?(?:with|understand))\s+([\w\s-]+?)(?:\?|$)/i,
+      // Topic patterns
+      /(?:about|regarding|concerning)\s+([\w\s-]+?)(?:\s+[,;]|$)/i,
+      // File/Project patterns
+      /(?:file|project|code|function|class|component)\s+(?:called|named)?\s*['"`]?([\w\s.-]+?)['"`]?(?:\s|$)/i,
+      // Chinese patterns
+      /(?:实现|创建|添加|修复|更新|优化|重构)\s*([\u4e00-\u9fa5\w\s-]+?)(?:\s*[,;，。]|$)/,
+      /(?:关于|如何|什么是|解释|帮助)\s*([\u4e00-\u9fa5\w\s-]+?)(?:\?|$)/,
+    ]
+
+    for (const pattern of taskPatterns) {
+      const match = content.match(pattern)
+      if (match && match[1]) {
+        const topic = match[1].trim()
+        if (topic.length >= 3 && topic.length <= 50) {
+          return topic
+        }
+      }
+    }
+
+    // Try to extract first sentence or phrase
+    const firstSentence = content.split(/[.!?。！？]/)[0].trim()
+    if (firstSentence.length >= 3 && firstSentence.length <= 50) {
+      return firstSentence
+    }
+
+    return ''
+  }
+
+  /**
    * Connect to Bridge Hub
    */
   async connect(): Promise<void> {
@@ -379,20 +463,23 @@ export class HubClient {
         }
 
         const messages = messagesResult.data?.messages || []
-        const firstUserMessage = messages.find((m: any) => m.role === 'user')?.content || 'New Session'
 
-        // Generate title using the session's model
-        const generateResult = await client.post({
-          url: `/session/${sessionId}/autotitle`,
-        })
+        // Generate intelligent title based on conversation content
+        const title = this.generateSmartTitle(messages)
 
-        if (generateResult.error) {
-          throw new Error(`Failed to generate title: ${JSON.stringify(generateResult.error)}`)
+        // Update session title via API
+        try {
+          await client.patch({
+            url: `/session/${sessionId}`,
+            body: { title }
+          })
+        } catch (error) {
+          this.logger.warn(`[HubClient] Failed to update session title: ${error}`)
         }
 
-        return { 
-          success: true, 
-          title: generateResult.data?.title || firstUserMessage.slice(0, 50),
+        return {
+          success: true,
+          title: title,
           message: '标题已生成'
         }
       }
