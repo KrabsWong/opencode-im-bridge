@@ -25,7 +25,10 @@ export class IMBridgeLogger {
       this.path = require('path')
       
       // Ensure directory exists
-      this.fs.mkdirSync(this.path.dirname(this.logFile), { recursive: true })
+      const dir = this.path.dirname(this.logFile)
+      if (this.fs && !this.fs.existsSync(dir)) {
+        this.fs.mkdirSync(dir, { recursive: true })
+      }
     } catch {
       // Directory may already exist or modules not available
     }

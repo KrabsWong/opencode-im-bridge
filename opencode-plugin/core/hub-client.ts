@@ -476,14 +476,16 @@ export class HubClient {
             url: `/session/${sessionId}/message`,
           })
 
-          this.logger.info(`[autotitle] Messages result:`, messagesResult)
+          this.logger.info(`[autotitle] Messages result type:`, typeof messagesResult.data)
+          this.logger.info(`[autotitle] Messages result data:`, JSON.stringify(messagesResult.data)?.slice(0, 500))
 
           if (messagesResult.error) {
             this.logger.error(`[autotitle] Failed to get messages:`, messagesResult.error)
             throw new Error(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`)
           }
 
-          const messages = messagesResult.data?.messages || []
+          // OpenCode API returns messages directly in data (array), not data.messages
+          const messages = Array.isArray(messagesResult.data) ? messagesResult.data : (messagesResult.data?.messages || [])
           this.logger.info(`[autotitle] Found ${messages.length} messages`)
 
           if (messages.length > 0) {
