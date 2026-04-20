@@ -16,6 +16,7 @@ interface PendingMessage {
 interface GoMessageContext {
   chatId: number
   messageId: string
+  comboMap: Map<string, RecentCombo> // shortId -> combo
 }
 
 export class MessageRouter {
@@ -259,11 +260,11 @@ export class MessageRouter {
         break
 
       case 'select_combo':
-        // 选择组合（实例+会话）- 使用索引
-        const comboIndex = parseInt(parts[1], 10)
+        // 选择组合（实例+会话）- 使用短ID
+        const shortId = parts[1]
         await this.handleSelectCombo(
           callback.user.id,
-          comboIndex,
+          shortId,
           callback.id,
           callback.chatId,
           callback.messageId
@@ -428,18 +429,22 @@ export class MessageRouter {
     text += '点击按钮快速切换：'
 
     const keyboard: IMKeyboard = { inline: [] }
+    const comboMap = new Map<string, RecentCombo>()
 
     // 每行放 2 个按钮
-    // 使用索引而不是完整ID，避免callback_data超过64字节限制
+    // 使用短ID映射而不是索引，避免实例断开导致索引错位
     for (let i = 0; i < availableCombos.length; i += 2) {
       const row: typeof keyboard.inline[0] = []
 
       for (let j = i; j < Math.min(i + 2, availableCombos.length); j++) {
         const combo = availableCombos[j]
         const buttonText = this.generateComboButtonText(combo)
+        // 生成短ID：实例名首字母+会话名首字母+索引（如 p-m-0）
+        const shortId = `${combo.instanceName.charAt(0)}-${combo.sessionTitle.charAt(0)}-${j}`
+        comboMap.set(shortId, combo)
         row.push({
           text: buttonText,
-          callbackData: `select_combo:${j}`
+          callbackData: `select_combo:${shortId}`
         })
       }
 
@@ -453,10 +458,11 @@ export class MessageRouter {
       replyMarkup: keyboard
     })
 
-    // 保存消息上下文，用于后续原地更新
+    // 保存消息上下文和映射表，用于后续点击查找
     this.goMessageContexts.set(userId, {
       chatId,
-      messageId: result.messageId
+      messageId: result.messageId,
+      comboMap
     })
   }
 
@@ -859,23 +865,31 @@ export class MessageRouter {
   // 处理选择组合
   private async handleSelectCombo(
     userId: string,
-    comboIndex: number,
+    shortId: string,
     callbackId: string,
     chatId: number,
     messageId?: string
   ): Promise<void> {
-    // 获取可用的最近组合列表
-    const availableCombos = this.getAvailableRecentCombos(userId)
+    // 从上下文中获取映射表
+    const goContext = this.goMessageContexts.get(userId)
 
-    // 检查索引是否有效
-    if (comboIndex < 0 || comboIndex >= availableCombos.length) {
+    if (!goContext || !goContext.comboMap) {
       if ('answerCallbackQuery' in this.adapter) {
-        await (this.adapter as any).answerCallbackQuery(callbackId, '选择已过期')
+        await (this.adapter as any).answerCallbackQuery(callbackId, '会话已过期，请重新输入 /go')
       }
       return
     }
 
-    const combo = availableCombos[comboIndex]
+    // 通过短ID查找组合
+    const combo = goContext.comboMap.get(shortId)
+
+    if (!combo) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '选择已失效')
+      }
+      return
+    }
+
     const instanceId = combo.instanceId
     const sessionId = combo.sessionId
 

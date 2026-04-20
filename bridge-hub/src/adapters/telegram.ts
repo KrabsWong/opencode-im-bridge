@@ -13,17 +13,41 @@ import { markdownToEntities } from '../core/markdown-entities.js'
 export class TelegramAdapter implements IMAdapter {
   readonly name = 'telegram'
   readonly version = '1.0.0'
-  
+
   private botToken: string
   private baseUrl: string
   private offset: number = 0
   private running: boolean = false
   private messageHandlers: Array<(message: IMMessage) => void> = []
   private callbackHandlers: Array<(callback: IMCallbackQuery) => void> = []
+  private readonly TIMEOUT_MS = 60000 // 60秒超时
 
   constructor(botToken?: string) {
     this.botToken = botToken || ''
     this.baseUrl = `https://api.telegram.org/bot${this.botToken}`
+  }
+
+  /**
+   * 带超时的 fetch 请求
+   */
+  private async fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), this.TIMEOUT_MS)
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+      return response
+    } catch (error) {
+      clearTimeout(timeoutId)
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.TIMEOUT_MS}ms`)
+      }
+      throw error
+    }
   }
 
   /**
@@ -74,7 +98,7 @@ export class TelegramAdapter implements IMAdapter {
       body.reply_markup = this.convertKeyboard(message.replyMarkup)
     }
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -131,7 +155,7 @@ export class TelegramAdapter implements IMAdapter {
       body.reply_markup = this.convertKeyboard(message.replyMarkup)
     }
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -223,7 +247,7 @@ export class TelegramAdapter implements IMAdapter {
   private async getUpdates(): Promise<TelegramUpdate[]> {
     const url = `${this.baseUrl}/getUpdates`
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -321,7 +345,7 @@ export class TelegramAdapter implements IMAdapter {
       body.text = text
     }
 
-    const response = await fetch(url, {
+    const response = await this.fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -339,16 +363,18 @@ export class TelegramAdapter implements IMAdapter {
   async getMe(): Promise<{ id: number; username: string; first_name: string }> {
     const url = `${this.baseUrl}/getMe`
 
-    const response = await fetch(url)
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET'
+    })
 
     if (!response.ok) {
       throw new Error(`Failed to get bot info: ${response.statusText}`)
     }
 
-    const data = await response.json() as { 
-      ok: boolean 
-      description?: string 
-      result: { id: number; username: string; first_name: string } 
+    const data = await response.json() as {
+      ok: boolean
+      description?: string
+      result: { id: number; username: string; first_name: string }
     }
 
     if (!data.ok) {
