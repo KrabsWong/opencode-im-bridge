@@ -38,6 +38,7 @@ export class MessageRouter {
   private userChatMap: Map<string, number> = new Map() // userId -> chatId
   private userRecentCombos: Map<string, RecentCombo[]> = new Map() // userId -> combos
   private goMessageContexts: Map<string, GoMessageContext> = new Map() // userId -> context
+  private lastResponseHashes: Map<string, string> = new Map() // sessionId -> hash
   private readonly MAX_RECENT_COMBOS = 5
 
   constructor(
@@ -69,6 +70,37 @@ export class MessageRouter {
         this.pendingPermissions.delete(id)
       }
     }
+  }
+
+  // 计算文本的简单哈希（用于重复检测）
+  private hashText(text: string): string {
+    // 标准化：小写、移除多余空格、trim
+    const normalized = text
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    // 简单的 djb2 哈希
+    let hash = 5381
+    for (let i = 0; i < normalized.length; i++) {
+      hash = ((hash << 5) + hash) + normalized.charCodeAt(i)
+      hash = hash & 0xFFFFFFFF // 转为 32 位无符号整数
+    }
+    return hash.toString(16)
+  }
+
+  // 检查是否为重复响应
+  private isDuplicateResponse(sessionId: string, responseText: string): boolean {
+    const hash = this.hashText(responseText)
+    const lastHash = this.lastResponseHashes.get(sessionId)
+
+    if (lastHash === hash) {
+      console.log(`[MessageRouter] Duplicate response detected for session ${sessionId}, skipping`)
+      return true
+    }
+
+    this.lastResponseHashes.set(sessionId, hash)
+    return false
   }
 
   // 记录最近使用的组合
@@ -824,6 +856,24 @@ export class MessageRouter {
 
       // 格式化响应
       const responseText = response.text || '无响应内容'
+
+      // 检查是否为重复响应
+      if (this.isDuplicateResponse(sessionId, responseText)) {
+        // 更新消息显示重复提示
+        const dupText = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n*[重复响应，已跳过]*`
+        const dupResult = markdownToEntities(dupText)
+
+        if (this.adapter.editMessage) {
+          await this.adapter.editMessage(processingMsg.messageId, {
+            chatId,
+            text: dupResult.text,
+            parseMode: 'entities',
+            entities: dupResult.entities
+          })
+        }
+        return
+      }
+
       const fullMarkdown = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n${responseText}`
 
       // 转换为 entities 并分片发送
@@ -895,12 +945,32 @@ export class MessageRouter {
       return
     }
 
+    // 获取 pending question 信息
+    const pendingQuestion = this.pendingMessages.get(requestId)
+
     try {
       await this.registry.sendToInstance(instance.id, {
         type: 'question_reply',
         requestId,
         value
       })
+
+      // 更新 Telegram 消息，移除按钮并显示处理结果
+      if (pendingQuestion && this.adapter.editMessage) {
+        const statusText = value === '__reject__' ? '❌ 已拒绝' : `✅ 已选择: ${value}`
+        const updatedText = `**INSTANCE:** \`${pendingQuestion.instanceId}\`\n**TITLE:** \`${pendingQuestion.sessionTitle}\`\n**SESSION ID:** \`${pendingQuestion.sessionId}\`\n\n🦀 **蟹老板需要您的确认：**\n\n${statusText}`
+        const result = markdownToEntities(updatedText)
+
+        await this.adapter.editMessage(pendingQuestion.messageId, {
+          chatId: pendingQuestion.chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+
+        // 从 pending 中移除
+        this.pendingMessages.delete(requestId)
+      }
     } catch (err) {
       console.error('Error sending question reply:', err)
     }
@@ -1304,5 +1374,56 @@ export class MessageRouter {
   // 发送消息的辅助方法
   private async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     return this.adapter.sendMessage(message)
+  }
+
+  /**
+   * 发送 Markdown 消息（支持 entities 和长消息分片）
+   * 统一封装的消息发送方法
+   */
+  private async sendMarkdownWithEntities(
+    chatId: number,
+    infoSection: string,
+    crabPrefix: string,
+    content: string,
+    options?: {
+      keyboard?: IMKeyboard
+      editMessageId?: string
+    }
+  ): Promise<void> {
+    // 构建完整 Markdown 文本
+    const fullMarkdown = `${infoSection}\n──────────────\n${crabPrefix}\n\n${content}`
+
+    // 转换为 entities
+    const result = markdownToEntities(fullMarkdown)
+
+    // 分割长消息（Telegram 限制 4096 字符）
+    const chunks = splitEntities(result.text, result.entities, 4096)
+
+    // 发送消息
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const isFirstChunk = i === 0
+      const isLastChunk = i === chunks.length - 1
+
+      const message: IMOutgoingMessage = {
+        chatId,
+        text: chunk.text,
+        parseMode: 'entities',
+        entities: chunk.entities
+      }
+
+      // 只在最后一个块添加键盘
+      if (isLastChunk && options?.keyboard) {
+        message.replyMarkup = options.keyboard
+      }
+
+      if (isFirstChunk && options?.editMessageId && this.adapter.editMessage) {
+        // 编辑现有消息
+        await this.adapter.editMessage(options.editMessageId, message)
+      } else {
+        // 发送新消息
+        await this.sendMessage(message)
+      }
+    }
   }
 }
