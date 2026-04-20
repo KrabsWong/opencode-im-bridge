@@ -377,11 +377,11 @@ export class MessageRouter {
     // 获取当前实例和 session 信息（统一代码块格式）
     let headerText = '**OpenCode 远程控制面板**\n──────────────\n\n'
     if (instance) {
-      headerText += `📁 \`${instance.id}\`\n`
+      headerText += `**INSTANCE:** \`${instance.id}\`\n`
       if (sessionId) {
         const sessionTitle = await this.getSessionTitle(instance.id, sessionId)
-        headerText += `📋 \`${sessionTitle}\`\n`
-        headerText += `🔑 \`${sessionId}\`\n`
+        headerText += `**TITLE:** \`${sessionTitle}\`\n`
+        headerText += `**SESSION ID:** \`${sessionId}\`\n`
       }
       headerText += '\n'
     }
@@ -770,13 +770,13 @@ export class MessageRouter {
     )
 
     // 构建消息前缀（统一使用代码块格式，视觉更整齐）
-    const infoSection = `📁 \`${instance.id}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
+    const infoSection = `**INSTANCE:** \`${instance.id}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\``
 
     // 发送"处理中"消息（使用显式分隔线字符）
     const separator = '──────────────'
     const processingText = autoCreated
-      ? `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**已自动创建新 Session，正在处理请求...**`
-      : `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**正在处理请求...**`
+      ? `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**已自动创建新 Session，正在处理请求...**`
+      : `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**正在处理请求...**`
     const processingResult = markdownToEntities(processingText)
     const processingMsg = await this.sendMessage({
       chatId,
@@ -810,7 +810,7 @@ export class MessageRouter {
 
       // 格式化响应
       const responseText = response.text || '无响应内容'
-      const fullMarkdown = `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n${responseText}`
+      const fullMarkdown = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n${responseText}`
 
       // 转换为 entities 并分片发送
       const result = markdownToEntities(fullMarkdown)
@@ -844,7 +844,7 @@ export class MessageRouter {
       this.pendingMessages.delete(processingMsg.messageId)
 
       const errorMsg = err instanceof Error ? err.message : String(err)
-      const errorText = `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**请求失败**\n\n${errorMsg}`
+      const errorText = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**请求失败**\n\n${errorMsg}`
       const errorResult = markdownToEntities(errorText)
 
       if (this.adapter.editMessage) {
@@ -978,7 +978,7 @@ export class MessageRouter {
     }
 
     // 构建选中状态的消息（统一代码块格式）
-    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\n📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
+    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\n**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\``
 
     // 转换为 entities 格式
     const result = markdownToEntities(selectedText)
@@ -1054,10 +1054,10 @@ export class MessageRouter {
           // 构建结果消息（统一代码块格式）
           const sessionTitle = sessionId ? await this.getSessionTitle(instance.id, sessionId) : '未命名'
           let resultText = `**OpenCode 远程控制面板**\n──────────────\n\n`
-          resultText += `📁 \`${instance.id}\`\n`
+          resultText += `**INSTANCE:** \`${instance.id}\`\n`
           if (sessionId) {
-            resultText += `📋 \`${sessionTitle}\`\n`
-            resultText += `🔑 \`${sessionId}\`\n`
+            resultText += `**TITLE:** \`${sessionTitle}\`\n`
+            resultText += `**SESSION ID:** \`${sessionId}\`\n`
           }
           resultText += `\n**命令执行成功**\n\n操作: ${command}`
 
@@ -1133,8 +1133,8 @@ export class MessageRouter {
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
     // 构建消息文本（统一代码块格式）
-    let text = `📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\`\n\n`
-    text += `🦀 **蟹老板需要您的确认**\n\n`
+    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
+    text += `🦀 **蟹老板需要您的确认：**\n\n`
     text += `**${question.header}**\n\n`
     text += `${question.question}\n\n`
 
@@ -1201,8 +1201,8 @@ export class MessageRouter {
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
     // 构建消息文本（统一代码块格式）
-    let text = `📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\`\n\n`
-    text += `🦀 **蟹老板请求权限**\n\n`
+    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
+    text += `🦀 **蟹老板请求权限：**\n\n`
     text += `**权限:** ${permission}\n\n`
 
     if (patterns?.length > 0) {
