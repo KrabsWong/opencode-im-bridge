@@ -466,46 +466,55 @@ export class HubClient {
           throw new Error('未选择 session，无法生成标题')
         }
 
-        console.log(`[autotitle] Starting for session: ${sessionId}`)
+        this.logger.info(`[autotitle] Starting for session: ${sessionId}`)
 
-        // Get session messages to generate title
-        const messagesResult = await client.get({
-          url: `/session/${sessionId}/messages`,
-        })
-
-        console.log(`[autotitle] Messages result:`, JSON.stringify(messagesResult, null, 2))
-
-        if (messagesResult.error) {
-          throw new Error(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`)
-        }
-
-        const messages = messagesResult.data?.messages || []
-        console.log(`[autotitle] Found ${messages.length} messages`)
-
-        if (messages.length > 0) {
-          console.log(`[autotitle] First message:`, JSON.stringify(messages[0], null, 2))
-        }
-
-        // Generate intelligent title based on conversation content
-        const title = this.generateSmartTitle(messages)
-        console.log(`[autotitle] Generated title: "${title}"`)
-
-        // Update session title via API
         try {
-          const patchResult = await client.patch({
-            url: `/session/${sessionId}`,
-            body: { title }
+          // Get session messages to generate title
+          this.logger.info(`[autotitle] Fetching messages from /session/${sessionId}/messages`)
+          const messagesResult = await client.get({
+            url: `/session/${sessionId}/messages`,
           })
-          console.log(`[autotitle] Update result:`, JSON.stringify(patchResult, null, 2))
-        } catch (error) {
-          console.error(`[autotitle] Failed to update session title:`, error)
-          this.logger.warn(`[HubClient] Failed to update session title: ${error}`)
-        }
 
-        return {
-          success: true,
-          title: title,
-          message: '标题已生成'
+          this.logger.info(`[autotitle] Messages result:`, messagesResult)
+
+          if (messagesResult.error) {
+            this.logger.error(`[autotitle] Failed to get messages:`, messagesResult.error)
+            throw new Error(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`)
+          }
+
+          const messages = messagesResult.data?.messages || []
+          this.logger.info(`[autotitle] Found ${messages.length} messages`)
+
+          if (messages.length > 0) {
+            this.logger.info(`[autotitle] First message role: ${messages[0].role}`)
+            this.logger.info(`[autotitle] First message content preview:`, messages[0].content?.slice(0, 100))
+          }
+
+          // Generate intelligent title based on conversation content
+          const title = this.generateSmartTitle(messages)
+          this.logger.info(`[autotitle] Generated title: "${title}"`)
+
+          // Update session title via API
+          try {
+            this.logger.info(`[autotitle] Updating session title via PATCH /session/${sessionId}`)
+            const patchResult = await client.patch({
+              url: `/session/${sessionId}`,
+              body: { title }
+            })
+            this.logger.info(`[autotitle] Update result:`, patchResult)
+          } catch (error) {
+            this.logger.error(`[autotitle] Failed to update session title:`, error)
+          }
+
+          this.logger.info(`[autotitle] Returning success with title: "${title}"`)
+          return {
+            success: true,
+            title: title,
+            message: '标题已生成'
+          }
+        } catch (err) {
+          this.logger.error(`[autotitle] Error during execution:`, err)
+          throw err
         }
       }
 
