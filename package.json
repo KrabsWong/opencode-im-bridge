@@ -1,14 +1,13 @@
 {
-  "name": "opencode-im-bridge",
-  "version": "1.0.0",
-  "description": "Universal IM Bridge for OpenCode - bidirectional communication with Telegram, Slack, Discord and more",
+  "name": "opencode-bridge-client",
+  "version": "2.0.0",
+  "description": "OpenCode Bridge Hub Client - Connects to Bridge Hub for IM integration",
   "type": "module",
-  "main": "./dist/server.js",
+  "main": "./dist/opencode-plugin/server.js",
   "exports": {
-    ".": "./dist/server.js",
-    "./server": "./dist/server.js",
-    "./types": "./dist/types/index.js",
-    "./adapters/telegram": "./dist/adapters/telegram.js"
+    ".": "./dist/opencode-plugin/server.js",
+    "./server": "./dist/opencode-plugin/server.js",
+    "./types": "./dist/opencode-plugin/types/index.js"
   },
   "files": [
     "dist",
@@ -22,24 +21,13 @@
   "keywords": [
     "opencode",
     "plugin",
-    "telegram",
-    "slack",
-    "discord",
-    "im",
     "bridge",
+    "hub",
+    "telegram",
     "notifications"
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "remark": "^15.0.0",
-    "remark-gfm": "^4.0.0",
-    "remark-parse": "^11.0.0",
-    "unified": "^11.0.0",
-    "unist-util-visit": "^5.0.0",
-    "mdast-util-to-string": "^4.0.0",
-    "mdast-util-gfm": "^3.0.0"
-  },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.0.0",
     "@opencode-ai/sdk": "^1.0.0"
@@ -47,7 +35,6 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.0.0",
     "@opencode-ai/sdk": "^1.0.0",
-    "typescript": "^5.0.0",
-    "@types/mdast": "^4.0.0"
+    "typescript": "^5.0.0"
   }
 }

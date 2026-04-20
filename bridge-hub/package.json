@@ -1,0 +1,36 @@
+{
+  "name": "opencode-bridge-hub",
+  "version": "1.0.0",
+  "description": "Bridge Hub for managing multiple OpenCode instances via IM platforms",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "mdast-util-to-string": "^4.0.0",
+    "remark": "^15.0.0",
+    "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/mdast": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "opencode",
+    "bridge",
+    "hub",
+    "telegram",
+    "websocket"
+  ],
+  "license": "MIT"
+}

@@ -22,6 +22,7 @@ declare const Bun: {
 declare namespace NodeJS {
   interface Process {
     on(event: string, listener: (...args: any[]) => void): void
+    cwd(): string
   }
 }
 

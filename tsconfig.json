@@ -7,8 +7,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "outDir": "./dist/opencode-plugin",
+    "rootDir": "./opencode-plugin",
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -27,6 +27,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
+  "include": ["opencode-plugin/**/*"],
   "exclude": ["node_modules", "dist"]
 }

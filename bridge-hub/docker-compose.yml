@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  bridge-hub:
+    build: .
+    ports:
+      - "${PORT:-38471}:${PORT:-38471}"
+    environment:
+      - PORT=${PORT:-38471}
+      - AUTH_TOKEN=${AUTH_TOKEN}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_USERS=${ADMIN_USERS}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

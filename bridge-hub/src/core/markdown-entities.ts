@@ -9,7 +9,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import { toString } from 'mdast-util-to-string'
-import type { Root, Content, Table, PhrasingContent, BlockContent } from 'mdast'
+import type { Root, RootContent, Table, PhrasingContent, BlockContent } from 'mdast'
 
 /**
  * Telegram 支持的 Entity 类型
@@ -32,9 +32,6 @@ export interface MarkdownConvertResult {
 
 /**
  * 计算 UTF-16 码元长度（Telegram 要求）
- * 
- * - BMP 字符（U+0000-U+FFFF）：1 个码元
- * - 非 BMP 字符（U+10000+，如 emoji）：2 个码元（代理对）
  */
 export function utf16Length(str: string): number {
   let length = 0
@@ -68,9 +65,6 @@ function stringWidth(str: string): number {
 
 /**
  * 将 Markdown 转换为纯文本 + Telegram Entities
- * 
- * @param markdown Markdown 文本
- * @returns 包含纯文本和 entities 的结果
  */
 export function markdownToEntities(markdown: string): MarkdownConvertResult {
   // 1. 使用 remark 解析为 AST
@@ -89,7 +83,7 @@ export function markdownToEntities(markdown: string): MarkdownConvertResult {
 /**
  * 检查节点是否需要分隔符（块级元素）
  */
-function needsSeparator(node: Content): boolean {
+function needsSeparator(node: RootContent): boolean {
   return ['heading', 'paragraph', 'code', 'blockquote', 'list', 'table', 'thematicBreak'].includes(node.type)
 }
 
@@ -217,18 +211,33 @@ function processBlockNode(
       break
     }
 
-    // 代码块 ```code```
-    case 'code': {
-      // 确保代码块前后有空行，提升 Telegram 显示效果
-      const needsLeadingNewline = newText.length > 0 && !newText.endsWith('\n')
-      if (needsLeadingNewline) {
-        newText += '\n'
-        newOffset += 1
+    // 标题
+    case 'heading': {
+      // 标题内容
+      for (const child of node.children) {
+        const result = processInlineNode(child, newText, entities, newOffset)
+        newText = result.text
+        newOffset = result.currentOffset
       }
       
+      // 标题作为整体加粗
+      const headingLength = newOffset - currentOffset
+      if (headingLength > 0) {
+        entities.push({
+          type: 'bold',
+          offset: currentOffset,
+          length: headingLength
+        })
+      }
+      break
+    }
+
+    // 代码块
+    case 'code': {
+      const content = node.value
       const start = newOffset
-      newText += node.value
-      const length = utf16Length(node.value)
+      newText += content
+      const length = utf16Length(content)
       entities.push({
         type: 'pre',
         offset: start,
@@ -236,47 +245,29 @@ function processBlockNode(
         language: node.lang || undefined
       })
       newOffset += length
-      
-      // 代码块后添加换行
-      newText += '\n'
-      newOffset += 1
-      
       break
     }
 
-    // 引用块 > text
+    // 引用块
     case 'blockquote': {
       const content = toString(node)
       const start = newOffset
       newText += content
       const length = utf16Length(content)
-      entities.push({ type: 'blockquote', offset: start, length })
+      entities.push({
+        type: 'blockquote',
+        offset: start,
+        length
+      })
       newOffset += length
-      break
-    }
-
-    // 标题 # Heading -> 转换为粗体
-    case 'heading': {
-      const content = toString(node)
-      const start = newOffset
-      newText += content
-      const length = utf16Length(content)
-      entities.push({ type: 'bold', offset: start, length })
-      newOffset += length
-      break
-    }
-
-    // 分割线 ---
-    case 'thematicBreak': {
-      const separator = '───'
-      newText += separator
-      newOffset += utf16Length(separator)
       break
     }
 
     // 列表
     case 'list': {
-      for (const item of node.children) {
+      for (let i = 0; i < node.children.length; i++) {
+        const item = node.children[i]
+        
         // 处理列表项前缀
         const prefix = item.checked === true ? '[x] ' :
                       item.checked === false ? '[ ] ' : '- '
@@ -288,6 +279,12 @@ function processBlockNode(
           const result = processBlockNode(child as BlockContent, newText, entities, newOffset)
           newText = result.text
           newOffset = result.currentOffset
+        }
+        
+        // 列表项之间加换行
+        if (i < node.children.length - 1) {
+          newText += '\n'
+          newOffset += 1
         }
       }
       break
@@ -301,6 +298,13 @@ function processBlockNode(
       const length = utf16Length(tableText)
       entities.push({ type: 'pre', offset: start, length })
       newOffset += length
+      break
+    }
+
+    // 分隔线
+    case 'thematicBreak': {
+      newText += '──────────────'
+      newOffset += 14
       break
     }
   }
@@ -402,16 +406,11 @@ function formatTable(table: Table): string {
 
 /**
  * 将长文本和 entities 分割成多个块（符合 Telegram 4096 限制）
- * 
- * @param text 完整文本
- * @param entities Entities 数组
- * @param maxLength 最大 UTF-16 长度（默认 4096）
- * @returns 分割后的结果数组
  */
 export function splitEntities(
   text: string, 
   entities: TelegramEntity[], 
-  maxLength: number = 4096
+  maxLength: number = 3500
 ): Array<{ text: string; entities: TelegramEntity[] }> {
   const totalLength = utf16Length(text)
   
