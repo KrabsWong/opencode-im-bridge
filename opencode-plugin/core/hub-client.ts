@@ -54,35 +54,25 @@ export class HubClient {
 
   /**
    * Extract text content from OpenCode message format
-   * Handles both { content: string } and { parts: [{type: 'text', text: '...'}] } formats
+   * OpenCode message structure: { info: { role, ... }, parts: [{type: 'text', text: '...'}] }
    */
   private extractMessageContent(message: any): string {
     if (!message) return ''
     
-    this.logger.info(`[extractMessageContent] Message structure:`, JSON.stringify(message))
-    
-    // Direct content field
-    if (message.content) {
-      this.logger.info(`[extractMessageContent] Found direct content:`, message.content.slice(0, 50))
-      return message.content
-    }
-    
-    // OpenCode parts format
+    // OpenCode uses 'parts' array at message level
     if (message.parts && Array.isArray(message.parts)) {
-      this.logger.info(`[extractMessageContent] Found parts array with ${message.parts.length} items`)
-      message.parts.forEach((p: any, i: number) => {
-        this.logger.info(`[extractMessageContent] Part ${i}:`, { type: p.type, text: p.text?.slice(0, 50) })
-      })
       const text = message.parts
         .filter((p: any) => p.type === 'text')
         .map((p: any) => p.text)
         .join('')
-      this.logger.info(`[extractMessageContent] Extracted text from parts:`, text.slice(0, 50))
       return text
     }
     
-    // Unknown format
-    this.logger.info(`[extractMessageContent] No content or parts found, keys:`, Object.keys(message))
+    // Fallback: direct content field
+    if (message.content) {
+      return message.content
+    }
+    
     return ''
   }
 
@@ -98,16 +88,20 @@ export class HubClient {
     }
 
     // Log message details for debugging
-    this.logger.info('[autotitle] Message roles:', messages.map((m: any) => m.role))
+    // OpenCode message structure: { info: { role }, parts: [...] }
+    this.logger.info('[autotitle] Message roles:', messages.map((m: any) => m.info?.role || m.role))
 
     // Get first user message for context
-    const firstUserMsg = messages.find((m: any) => m.role === 'user')
+    const firstUserMsg = messages.find((m: any) => (m.info?.role || m.role) === 'user')
     const firstUserMessage = this.extractMessageContent(firstUserMsg)
     this.logger.info(`[autotitle] First user message: "${firstUserMessage.slice(0, 100)}"`)
 
     // Extract key topics/keywords from all messages
     const allContent = messages
-      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .filter((m: any) => {
+        const role = m.info?.role || m.role
+        return role === 'user' || role === 'assistant'
+      })
       .map((m: any) => this.extractMessageContent(m))
       .join(' ')
 
@@ -524,13 +518,10 @@ export class HubClient {
           this.logger.info(`[autotitle] Found ${messages.length} messages`)
 
           if (messages.length > 0) {
-            this.logger.info(`[autotitle] First message keys:`, Object.keys(messages[0]))
-            this.logger.info(`[autotitle] First message role: ${messages[0].role}`)
-            // OpenCode messages use 'parts' array, not 'content' string
-            const firstMsgContent = messages[0].content || 
-              messages[0].parts?.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('') ||
-              ''
-            this.logger.info(`[autotitle] First message content preview:`, firstMsgContent.slice(0, 100))
+            this.logger.info(`[autotitle] First message structure:`, JSON.stringify(messages[0]).slice(0, 200))
+            // OpenCode messages structure: { info: { role }, parts: [...] }
+            const firstMsgRole = messages[0].info?.role || messages[0].role
+            this.logger.info(`[autotitle] First message role: ${firstMsgRole}`)
           }
 
           // Generate intelligent title based on conversation content
