@@ -57,36 +57,22 @@ export class HubClient {
    * OpenCode message structure: { info: { role, ... }, parts: [{type: 'text', text: '...'}] }
    */
   private extractMessageContent(message: any): string {
-    if (!message) {
-      this.logger.info(`[extractMessageContent] Message is null/undefined`)
-      return ''
-    }
-    
-    const keys = Object.keys(message)
-    this.logger.info(`[extractMessageContent] Message keys: ${keys.join(',')}`)
-    this.logger.info(`[extractMessageContent] Has parts: ${!!message.parts} isArray:${Array.isArray(message.parts)}`)
+    if (!message) return ''
     
     // OpenCode uses 'parts' array at message level
     if (message.parts && Array.isArray(message.parts)) {
-      this.logger.info(`[extractMessageContent] Parts count: ${message.parts.length}`)
-      if (message.parts.length > 0) {
-        this.logger.info(`[extractMessageContent] First part type: ${message.parts[0].type}`)
-        this.logger.info(`[extractMessageContent] First part has text: ${!!message.parts[0].text}`)
-      }
-      const textParts = message.parts.filter((p: any) => p.type === 'text')
-      this.logger.info(`[extractMessageContent] Text parts count: ${textParts.length}`)
-      const text = textParts.map((p: any) => p.text).join('')
-      this.logger.info(`[extractMessageContent] Extracted text length: ${text.length}`)
+      const text = message.parts
+        .filter((p: any) => p.type === 'text')
+        .map((p: any) => p.text)
+        .join('')
       return text
     }
     
     // Fallback: direct content field
     if (message.content) {
-      this.logger.info(`[extractMessageContent] Using direct content`)
       return message.content
     }
     
-    this.logger.info(`[extractMessageContent] No content found`)
     return ''
   }
 
@@ -94,27 +80,13 @@ export class HubClient {
    * Generate intelligent title based on conversation messages
    */
   private generateSmartTitle(messages: any[]): string {
-    this.logger.info(`[autotitle] Generating title from ${messages.length} messages`)
-
     if (messages.length === 0) {
-      this.logger.warn('[autotitle] No messages found, using default title')
       return 'New Session'
     }
 
-    // Log message details for debugging
-    // OpenCode message structure: { info: { role }, parts: [...] }
-    this.logger.info('[autotitle] Message roles:', messages.map((m: any, i: number) => `${i}:${m.info?.role || m.role}`).slice(0, 10))
-
     // Get first user message for context
-    const firstUserMsgIndex = messages.findIndex((m: any) => (m.info?.role || m.role) === 'user')
-    this.logger.info(`[autotitle] First user message index:`, firstUserMsgIndex)
-    const firstUserMsg = firstUserMsgIndex >= 0 ? messages[firstUserMsgIndex] : null
-    this.logger.info(`[autotitle] First user message object:`, firstUserMsg ? 'found' : 'null')
-    if (firstUserMsg) {
-      this.logger.info(`[autotitle] First user message keys:`, Object.keys(firstUserMsg))
-    }
+    const firstUserMsg = messages.find((m: any) => (m.info?.role || m.role) === 'user')
     const firstUserMessage = this.extractMessageContent(firstUserMsg)
-    this.logger.info(`[autotitle] First user message extracted: "${firstUserMessage.slice(0, 100)}"`)
 
     // Extract key topics/keywords from all messages
     const allContent = messages
@@ -127,18 +99,15 @@ export class HubClient {
 
     // Try to extract main topic from first user message
     let title = this.extractMainTopic(firstUserMessage)
-    this.logger.info(`[autotitle] Extracted from first message: "${title}"`)
 
     // If no clear topic found, try to extract from all content
     if (!title || title.length < 3) {
       title = this.extractMainTopic(allContent)
-      this.logger.info(`[autotitle] Extracted from all content: "${title}"`)
     }
 
     // Fallback to first message preview
     if (!title || title.length < 3) {
       title = firstUserMessage.slice(0, 50) || allContent.slice(0, 50)
-      this.logger.info(`[autotitle] Using first message preview: "${title}"`)
     }
 
     // Clean up title
@@ -152,10 +121,7 @@ export class HubClient {
       title = title.slice(0, 47) + '...'
     }
 
-    const finalTitle = title || 'New Session'
-    this.logger.info(`[autotitle] Final title: "${finalTitle}"`)
-
-    return finalTitle
+    return title || 'New Session'
   }
 
   /**
@@ -515,74 +481,33 @@ export class HubClient {
           throw new Error('未选择 session，无法生成标题')
         }
 
-        this.logger.info(`[autotitle] Starting for session: ${sessionId}`)
-
         try {
           // Get session messages to generate title
-          // Note: OpenCode API uses singular 'message' not 'messages'
-          this.logger.info(`[autotitle] Fetching messages from /session/${sessionId}/message`)
           const messagesResult = await client.get({
             url: `/session/${sessionId}/message`,
           })
 
-          this.logger.info(`[autotitle] Messages result type:`, typeof messagesResult.data)
-          this.logger.info(`[autotitle] Messages result data:`, JSON.stringify(messagesResult.data)?.slice(0, 500))
-
           if (messagesResult.error) {
-            this.logger.error(`[autotitle] Failed to get messages:`, messagesResult.error)
             throw new Error(`Failed to get messages: ${JSON.stringify(messagesResult.error)}`)
           }
 
-          // OpenCode API returns messages directly in data (array), not data.messages
-          // Keep reference to original data to avoid any transformation issues
+          // OpenCode API returns messages directly in data (array)
           const rawData = messagesResult.data
-          this.logger.info(`[autotitle] Raw data type: ${typeof rawData}`)
-          this.logger.info(`[autotitle] Raw data is array: ${Array.isArray(rawData)}`)
+          const messages = Array.isArray(rawData) ? rawData : []
           
-          let messages: any[] = []
-          if (Array.isArray(rawData)) {
-            messages = rawData
-          } else if (rawData && typeof rawData === 'object') {
-            // Try different possible locations for messages array
-            messages = rawData.messages || rawData.items || rawData.data || []
-          }
-          
-          this.logger.info(`[autotitle] Found ${messages.length} messages`)
-
-          if (messages.length > 0) {
-            // Access first item directly from original data if possible
-            const firstItem = Array.isArray(rawData) ? rawData[0] : messages[0]
-            this.logger.info(`[autotitle] First item type: ${typeof firstItem}`)
-            this.logger.info(`[autotitle] First item is null: ${firstItem === null}`)
-            this.logger.info(`[autotitle] First item keys: ${firstItem ? Object.keys(firstItem).join(',') : 'N/A'}`)
-            
-            if (firstItem && firstItem.info) {
-              this.logger.info(`[autotitle] First item info.role: ${firstItem.info.role}`)
-            }
-            if (firstItem && firstItem.parts) {
-              this.logger.info(`[autotitle] First item parts length: ${firstItem.parts.length}`)
-            }
-          }
-
           // Generate intelligent title based on conversation content
-          // Pass the raw data array directly if messages is empty
-          const messagesToProcess = messages.length > 0 ? messages : (Array.isArray(rawData) ? rawData : [])
-          const title = this.generateSmartTitle(messagesToProcess)
-          this.logger.info(`[autotitle] Generated title: "${title}"`)
+          const title = this.generateSmartTitle(messages)
 
           // Update session title via API
           try {
-            this.logger.info(`[autotitle] Updating session title via PATCH /session/${sessionId}`)
             const patchResult = await client.patch({
               url: `/session/${sessionId}`,
               body: { title }
             })
-            this.logger.info(`[autotitle] Update result:`, patchResult)
           } catch (error) {
             this.logger.error(`[autotitle] Failed to update session title:`, error)
           }
 
-          this.logger.info(`[autotitle] Returning success with title: "${title}"`)
           return {
             success: true,
             title: title,
@@ -654,19 +579,14 @@ export class HubClient {
       const client = (this.input.client as any)._client || this.input.client
 
       // Permission.Reply is a string literal: "once" | "always" | "reject"
-      // Not an object!
       const replyValue = value === 'once' ? 'once' :
                         value === 'always' ? 'always' :
                         'reject'
 
-      this.logger.info(`[handlePermissionReply] Sending permission reply:`, { requestId, reply: replyValue })
-
-      const result = await client.post({
+      await client.post({
         url: `/permission/${requestId}/reply`,
         body: { reply: replyValue }
       })
-
-      this.logger.info(`[handlePermissionReply] Permission reply result:`, result)
 
       return { success: true }
     } catch (err) {
