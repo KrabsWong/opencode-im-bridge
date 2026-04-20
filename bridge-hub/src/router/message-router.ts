@@ -202,10 +202,12 @@ export class MessageRouter {
           // 清除之前选择的 session
           this.registry.clearUserSession(callback.user.id)
 
+          const result = markdownToEntities(`**已选择实例**: ${instanceId}\n\n请使用 /sessions 查看并选择要使用的 session。`)
           await this.sendMessage({
             chatId: callback.chatId,
-            text: `**已选择实例**: ${instanceId}\n\n请使用 /sessions 查看并选择要使用的 session。`,
-            parseMode: 'entities'
+            text: result.text,
+            parseMode: 'entities',
+            entities: result.entities
           })
         }
         break
@@ -237,10 +239,12 @@ export class MessageRouter {
           await (this.adapter as any).answerCallbackQuery(callback.id, `已选择 session`)
         }
 
+        const result = markdownToEntities(`**已选择 Session**: \`${sessionId}\`\n\n实例: **${userInstance.id}**\n\n现在可以直接发送消息了。`)
         await this.sendMessage({
           chatId: callback.chatId,
-          text: `**已选择 Session**: \`${sessionId}\`\n\n实例: **${userInstance.id}**\n\n现在可以直接发送消息了。`,
-          parseMode: 'entities'
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
         })
         break
 
@@ -291,10 +295,12 @@ export class MessageRouter {
 
       case '/use':
         if (args.length === 0) {
+          const result = markdownToEntities('❌ **请提供实例 ID**\n用法: `/use <instance-id>`')
           await this.sendMessage({
             chatId,
-            text: '❌ **请提供实例 ID**\n用法: `/use <instance-id>`',
-            parseMode: 'entities'
+            text: result.text,
+            parseMode: 'entities',
+            entities: result.entities
           })
           return
         }
@@ -318,10 +324,12 @@ export class MessageRouter {
         break
 
       default:
+        const result = markdownToEntities(`❓ **未知命令**: ${command}\n使用 /help 查看可用命令`)
         await this.sendMessage({
           chatId,
-          text: `❓ **未知命令**: ${command}\n使用 /help 查看可用命令`,
-          parseMode: 'entities'
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
         })
     }
   }
@@ -352,10 +360,12 @@ export class MessageRouter {
 使用 /go 可快速切换到最近使用过的 5 个会话组合
     `.trim()
 
+    const result = markdownToEntities(text)
     await this.sendMessage({
       chatId,
-      text,
-      parseMode: 'entities'
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities
     })
   }
 
@@ -396,10 +406,12 @@ export class MessageRouter {
       ]
     }
 
+    const result = markdownToEntities(text)
     await this.sendMessage({
       chatId,
-      text,
+      text: result.text,
       parseMode: 'entities',
+      entities: result.entities,
       replyMarkup: keyboard
     })
   }
@@ -409,25 +421,30 @@ export class MessageRouter {
     const availableCombos = this.getAvailableRecentCombos(userId)
 
     if (availableCombos.length === 0) {
+      const result = markdownToEntities('🚀 **快速切换**\n\n暂无最近使用的会话组合。\n\n请先使用 /instances 开始。')
       await this.sendMessage({
         chatId,
-        text: '🚀 **快速切换**\n\n暂无最近使用的会话组合。\n\n请先使用 /instances 开始。',
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
 
-    let text = '🚀 **快速切换**\n\n最近使用的会话组合：\n\n'
+    let markdownText = '🚀 **快速切换**\n\n最近使用的会话组合：\n\n'
 
     // 在文字中详细展示所有组合
     availableCombos.forEach((combo, index) => {
       const timeAgo = this.formatTimeAgo(combo.lastUsedAt)
-      text += `${index + 1}. **${combo.instanceName}**\n`
-      text += `   会话: ${combo.sessionTitle}\n`
-      text += `   使用: ${timeAgo} (${combo.useCount}次)\n\n`
+      markdownText += `${index + 1}. **${combo.instanceName}**\n`
+      markdownText += `   会话: ${combo.sessionTitle}\n`
+      markdownText += `   使用: ${timeAgo} (${combo.useCount}次)\n\n`
     })
 
-    text += '点击按钮快速切换：'
+    markdownText += '点击按钮快速切换：'
+
+    // 转换为 entities
+    const { text, entities } = markdownToEntities(markdownText)
 
     const keyboard: IMKeyboard = { inline: [] }
     const comboMap = new Map<string, RecentCombo>()
@@ -456,6 +473,7 @@ export class MessageRouter {
       chatId,
       text,
       parseMode: 'entities',
+      entities,
       replyMarkup: keyboard
     })
 
@@ -472,10 +490,12 @@ export class MessageRouter {
     const instances = this.registry.getAllInstances()
 
     if (instances.length === 0) {
+      const result = markdownToEntities('**当前没有连接的实例**')
       await this.sendMessage({
         chatId,
-        text: '**当前没有连接的实例**',
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -496,10 +516,12 @@ export class MessageRouter {
       }])
     })
 
+    const result = markdownToEntities(text)
     await this.sendMessage({
       chatId,
-      text,
+      text: result.text,
       parseMode: 'entities',
+      entities: result.entities,
       replyMarkup: keyboard
     })
   }
@@ -512,16 +534,20 @@ export class MessageRouter {
       // 清除之前选择的 session
       this.registry.clearUserSession(userId)
 
+      const result = markdownToEntities(`**已选择实例**: \`${instanceId}\`\n\n请使用 /sessions 查看并选择要使用的 session。`)
       await this.sendMessage({
         chatId,
-        text: `**已选择实例**: \`${instanceId}\`\n\n请使用 /sessions 查看并选择要使用的 session。`,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
     } else {
+      const result = markdownToEntities(`**实例不存在**: \`${instanceId}\`\n\n使用 /instances 查看可用实例。`)
       await this.sendMessage({
         chatId,
-        text: `**实例不存在**: \`${instanceId}\`\n\n使用 /instances 查看可用实例。`,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
     }
   }
@@ -531,10 +557,12 @@ export class MessageRouter {
     const context = this.registry.getUserContext(userId)
 
     if (!context.selectedInstanceId) {
+      const result = markdownToEntities('**当前没有选择实例**\n\n使用 /instances 查看并选择实例。')
       await this.sendMessage({
         chatId,
-        text: '**当前没有选择实例**\n\n使用 /instances 查看并选择实例。',
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -542,10 +570,12 @@ export class MessageRouter {
     const instance = this.registry.getInstance(context.selectedInstanceId)
 
     if (!instance) {
+      const result = markdownToEntities(`**之前选择的实例** \`${context.selectedInstanceId}\` 已断开连接。\n\n请使用 /instances 重新选择。`)
       await this.sendMessage({
         chatId,
-        text: `**之前选择的实例** \`${context.selectedInstanceId}\` 已断开连接。\n\n请使用 /instances 重新选择。`,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -558,10 +588,12 @@ export class MessageRouter {
       text += `\n\n**未选择 Session**\n使用 /sessions 查看可用 sessions。`
     }
 
+    const result = markdownToEntities(text)
     await this.sendMessage({
       chatId,
-      text,
-      parseMode: 'entities'
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities
     })
   }
 
@@ -570,10 +602,12 @@ export class MessageRouter {
     const instance = this.registry.getUserInstance(userId)
 
     if (!instance) {
+      const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
       await this.sendMessage({
         chatId,
-        text: '**请先选择实例**\n\n使用 /instances 查看可用实例。',
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -586,10 +620,12 @@ export class MessageRouter {
       })
 
       if (response.error) {
+        const result = markdownToEntities(`**获取 Sessions 失败**\n\n${response.error}`)
         await this.sendMessage({
           chatId,
-          text: `**获取 Sessions 失败**\n\n${response.error}`,
-          parseMode: 'entities'
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
         })
         return
       }
@@ -597,10 +633,12 @@ export class MessageRouter {
       const sessions = response.sessions || []
 
       if (sessions.length === 0) {
+        const result = markdownToEntities('**当前实例没有 Sessions**\n\n请在 OpenCode 中创建新 session。')
         await this.sendMessage({
           chatId,
-          text: '**当前实例没有 Sessions**\n\n请在 OpenCode 中创建新 session。',
-          parseMode: 'entities'
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
         })
         return
       }
@@ -630,18 +668,22 @@ export class MessageRouter {
 
       text += '\n点击按钮选择要使用的 session。'
 
+      const result = markdownToEntities(text)
       await this.sendMessage({
         chatId,
-        text,
+        text: result.text,
         parseMode: 'entities',
+        entities: result.entities,
         replyMarkup: keyboard
       })
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
+      const result = markdownToEntities(`**获取 Sessions 失败**\n\n${errorMsg}`)
       await this.sendMessage({
         chatId,
-        text: `**获取 Sessions 失败**\n\n${errorMsg}`,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
     }
   }
@@ -651,10 +693,12 @@ export class MessageRouter {
     const instance = this.registry.getUserInstance(userId)
 
     if (!instance) {
+      const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
       await this.sendMessage({
         chatId,
-        text: '**请先选择实例**\n\n使用 /instances 查看可用实例。',
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -685,10 +729,12 @@ export class MessageRouter {
         })
         
         if (createResponse.error || !createResponse.sessionId) {
+          const result = markdownToEntities(`**创建 Session 失败**\n\n${createResponse.error || '未知错误'}`)
           await this.sendMessage({
             chatId,
-            text: `**创建 Session 失败**\n\n${createResponse.error || '未知错误'}`,
-            parseMode: 'entities'
+            text: result.text,
+            parseMode: 'entities',
+            entities: result.entities
           })
           return
         }
@@ -701,10 +747,12 @@ export class MessageRouter {
 
     // 此时 sessionId 一定存在
     if (!sessionId) {
+      const result = markdownToEntities(`**Session 获取失败**\n\n无法获取或创建 session`)
       await this.sendMessage({
         chatId,
-        text: `**Session 获取失败**\n\n无法获取或创建 session`,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
       return
     }
@@ -903,10 +951,12 @@ export class MessageRouter {
 
       // 原地更新消息，显示错误
       if (messageId && this.adapter.editMessage) {
+        const result = markdownToEntities('🚀 **快速切换**\n\n❌ 该实例已断开连接，请重新选择。')
         await this.adapter.editMessage(messageId, {
           chatId,
-          text: '🚀 **快速切换**\n\n❌ 该实例已断开连接，请重新选择。',
-          parseMode: 'entities'
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
         })
       }
       return
@@ -929,19 +979,24 @@ export class MessageRouter {
     // 构建选中状态的消息（统一代码块格式）
     const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\n📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
 
+    // 转换为 entities 格式
+    const result = markdownToEntities(selectedText)
+
     // 原地更新消息
     if (messageId && this.adapter.editMessage) {
       await this.adapter.editMessage(messageId, {
         chatId,
-        text: selectedText,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
     } else {
       // 如果无法编辑，发送新消息
       await this.sendMessage({
         chatId,
-        text: selectedText,
-        parseMode: 'entities'
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
       })
     }
   }
@@ -979,10 +1034,12 @@ export class MessageRouter {
         if (response.error) {
           await (this.adapter as any).answerCallbackQuery(callbackId, `执行失败`)
           // 错误时发送新消息
+          const errorResult = markdownToEntities(`**命令执行失败**\n\n操作: ${command}\n错误: ${response.error}`)
           await this.sendMessage({
             chatId: chatId,
-            text: `**命令执行失败**\n\n操作: ${command}\n错误: ${response.error}`,
-            parseMode: 'entities'
+            text: errorResult.text,
+            parseMode: 'entities',
+            entities: errorResult.entities
           })
         } else {
           await (this.adapter as any).answerCallbackQuery(callbackId, `执行成功`)
@@ -1009,18 +1066,23 @@ export class MessageRouter {
             resultText += `\n\n新标题: **${response.title}**`
           }
 
+          // 转换为 entities
+          const result = markdownToEntities(resultText)
+
           // 如果有 messageId，编辑原消息移除按钮；否则发送新消息
           if (messageId && this.adapter.editMessage) {
             await this.adapter.editMessage(messageId, {
               chatId,
-              text: resultText,
-              parseMode: 'entities'
+              text: result.text,
+              parseMode: 'entities',
+              entities: result.entities
             })
           } else {
             await this.sendMessage({
               chatId: chatId,
-              text: resultText,
-              parseMode: 'entities'
+              text: result.text,
+              parseMode: 'entities',
+              entities: result.entities
             })
           }
         }
@@ -1030,10 +1092,12 @@ export class MessageRouter {
       if ('answerCallbackQuery' in this.adapter) {
         await (this.adapter as any).answerCallbackQuery(callbackId, '执行失败')
       }
+      const errorResult = markdownToEntities(`**命令执行失败**\n\n操作: ${command}\n错误: ${errorMsg}`)
       await this.sendMessage({
         chatId: chatId,
-        text: `**命令执行失败**\n\n操作: ${command}\n错误: ${errorMsg}`,
-        parseMode: 'entities'
+        text: errorResult.text,
+        parseMode: 'entities',
+        entities: errorResult.entities
       })
     }
   }
@@ -1103,10 +1167,12 @@ export class MessageRouter {
     }
 
     try {
+      const entityResult = markdownToEntities(text)
       const result = await this.sendMessage({
         chatId,
-        text,
+        text: entityResult.text,
         parseMode: 'entities',
+        entities: entityResult.entities,
         replyMarkup: keyboard
       })
 
@@ -1165,10 +1231,12 @@ export class MessageRouter {
     }
 
     try {
+      const entityResult = markdownToEntities(text)
       const result = await this.sendMessage({
         chatId,
-        text,
+        text: entityResult.text,
         parseMode: 'entities',
+        entities: entityResult.entities,
         replyMarkup: keyboard
       })
 

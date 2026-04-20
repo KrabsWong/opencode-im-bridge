@@ -56,12 +56,20 @@ export class HubClient {
    * Generate intelligent title based on conversation messages
    */
   private generateSmartTitle(messages: any[]): string {
+    this.logger.info(`[HubClient] Generating title from ${messages.length} messages`)
+
     if (messages.length === 0) {
+      this.logger.warn('[HubClient] No messages found, using default title')
       return 'New Session'
     }
 
+    // Log message roles for debugging
+    const messageRoles = messages.map((m: any) => m.role).join(', ')
+    this.logger.info(`[HubClient] Message roles: ${messageRoles}`)
+
     // Get first user message for context
     const firstUserMessage = messages.find((m: any) => m.role === 'user')?.content || ''
+    this.logger.info(`[HubClient] First user message: ${firstUserMessage.slice(0, 100)}`)
 
     // Extract key topics/keywords from all messages
     const allContent = messages
@@ -71,15 +79,18 @@ export class HubClient {
 
     // Try to extract main topic from first user message
     let title = this.extractMainTopic(firstUserMessage)
+    this.logger.info(`[HubClient] Extracted from first message: "${title}"`)
 
     // If no clear topic found, try to extract from all content
     if (!title || title.length < 3) {
       title = this.extractMainTopic(allContent)
+      this.logger.info(`[HubClient] Extracted from all content: "${title}"`)
     }
 
     // Fallback to first message preview
     if (!title || title.length < 3) {
-      title = firstUserMessage.slice(0, 40) || allContent.slice(0, 40) || 'New Session'
+      title = firstUserMessage.slice(0, 50) || allContent.slice(0, 50)
+      this.logger.info(`[HubClient] Using first message preview: "${title}"`)
     }
 
     // Clean up title
@@ -93,7 +104,10 @@ export class HubClient {
       title = title.slice(0, 47) + '...'
     }
 
-    return title || 'New Session'
+    const finalTitle = title || 'New Session'
+    this.logger.info(`[HubClient] Final title: "${finalTitle}"`)
+
+    return finalTitle
   }
 
   /**
