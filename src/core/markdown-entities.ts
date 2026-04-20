@@ -219,6 +219,13 @@ function processBlockNode(
 
     // 代码块 ```code```
     case 'code': {
+      // 确保代码块前后有空行，提升 Telegram 显示效果
+      const needsLeadingNewline = newText.length > 0 && !newText.endsWith('\n')
+      if (needsLeadingNewline) {
+        newText += '\n'
+        newOffset += 1
+      }
+      
       const start = newOffset
       newText += node.value
       const length = utf16Length(node.value)
@@ -229,6 +236,11 @@ function processBlockNode(
         language: node.lang || undefined
       })
       newOffset += length
+      
+      // 代码块后添加换行
+      newText += '\n'
+      newOffset += 1
+      
       break
     }
 
