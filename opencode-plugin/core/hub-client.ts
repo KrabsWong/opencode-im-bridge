@@ -470,9 +470,10 @@ export class HubClient {
 
         try {
           // Get session messages to generate title
-          this.logger.info(`[autotitle] Fetching messages from /session/${sessionId}/messages`)
+          // Note: OpenCode API uses singular 'message' not 'messages'
+          this.logger.info(`[autotitle] Fetching messages from /session/${sessionId}/message`)
           const messagesResult = await client.get({
-            url: `/session/${sessionId}/messages`,
+            url: `/session/${sessionId}/message`,
           })
 
           this.logger.info(`[autotitle] Messages result:`, messagesResult)
@@ -577,13 +578,26 @@ export class HubClient {
     try {
       const client = (this.input.client as any)._client || this.input.client
 
-      await client.post({
+      // Map value to OpenCode Permission.Reply format
+      // 'once' -> { type: 'once' }
+      // 'always' -> { type: 'always' }
+      // 'reject' -> { type: 'reject' }
+      const replyValue = value === 'once' ? { type: 'once' } :
+                        value === 'always' ? { type: 'always' } :
+                        { type: 'reject' }
+
+      this.logger.info(`[handlePermissionReply] Sending permission reply:`, { requestId, reply: replyValue })
+
+      const result = await client.post({
         url: `/permission/${requestId}/reply`,
-        body: { action: value }
+        body: { reply: replyValue }
       })
+
+      this.logger.info(`[handlePermissionReply] Permission reply result:`, result)
 
       return { success: true }
     } catch (err) {
+      this.logger.error(`[handlePermissionReply] Error:`, err)
       return { error: err instanceof Error ? err.message : String(err) }
     }
   }
