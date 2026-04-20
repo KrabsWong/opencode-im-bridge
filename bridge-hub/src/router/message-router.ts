@@ -775,13 +775,12 @@ export class MessageRouter {
         })
         
         if (createResponse.error || !createResponse.sessionId) {
-          const result = markdownToEntities(`**创建 Session 失败**\n\n${createResponse.error || '未知错误'}`)
-          await this.sendMessage({
+          await this.sendMarkdownWithEntities(
             chatId,
-            text: result.text,
-            parseMode: 'entities',
-            entities: result.entities
-          })
+            '**创建 Session 失败**',
+            '',
+            createResponse.error || '未知错误'
+          )
           return
         }
         
@@ -793,13 +792,12 @@ export class MessageRouter {
 
     // 此时 sessionId 一定存在
     if (!sessionId) {
-      const result = markdownToEntities(`**Session 获取失败**\n\n无法获取或创建 session`)
-      await this.sendMessage({
+      await this.sendMarkdownWithEntities(
         chatId,
-        text: result.text,
-        parseMode: 'entities',
-        entities: result.entities
-      })
+        '**Session 获取失败**',
+        '',
+        '无法获取或创建 session'
+      )
       return
     }
 
@@ -815,23 +813,30 @@ export class MessageRouter {
       sessionTitle
     )
 
-    // 构建消息前缀（统一使用代码块格式，视觉更整齐）
+    // 构建消息前缀
     const infoSection = `**INSTANCE:** \`${instance.id}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\``
+    const processingContent = autoCreated
+      ? '**已自动创建新 Session，正在处理请求...**'
+      : '**正在处理请求...**'
 
-    // 发送"处理中"消息（使用显式分隔线字符）
-    const separator = '──────────────'
-    const processingText = autoCreated
-      ? `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**已自动创建新 Session，正在处理请求...**`
-      : `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**正在处理请求...**`
-    const processingResult = markdownToEntities(processingText)
+    // 发送"处理中"消息
     const processingMsg = await this.sendMessage({
       chatId,
-      text: processingResult.text,
+      text: '',
       parseMode: 'entities',
-      entities: processingResult.entities
+      entities: []
     })
+    
+    // 使用统一方法发送处理中消息
+    await this.sendMarkdownWithEntities(
+      chatId,
+      infoSection,
+      '🦀 **蟹老板说：**',
+      processingContent,
+      { editMessageId: processingMsg.messageId }
+    )
 
-    // 记录正在处理的消息（防止切换选择后收不到响应）
+    // 记录正在处理的消息
     this.pendingMessages.set(processingMsg.messageId, {
       chatId,
       messageId: processingMsg.messageId,
@@ -848,7 +853,7 @@ export class MessageRouter {
         text,
         userId,
         chatId,
-        sessionId  // 使用选中的 session
+        sessionId
       })
 
       // 从 pending 中移除
@@ -859,66 +864,36 @@ export class MessageRouter {
 
       // 检查是否为重复响应
       if (this.isDuplicateResponse(sessionId, responseText)) {
-        // 更新消息显示重复提示
-        const dupText = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n*[重复响应，已跳过]*`
-        const dupResult = markdownToEntities(dupText)
-
-        if (this.adapter.editMessage) {
-          await this.adapter.editMessage(processingMsg.messageId, {
-            chatId,
-            text: dupResult.text,
-            parseMode: 'entities',
-            entities: dupResult.entities
-          })
-        }
+        await this.sendMarkdownWithEntities(
+          chatId,
+          infoSection,
+          '🦀 **蟹老板说：**',
+          '*[重复响应，已跳过]*',
+          { editMessageId: processingMsg.messageId }
+        )
         return
       }
 
-      const fullMarkdown = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n${responseText}`
-
-      // 转换为 entities 并分片发送
-      const result = markdownToEntities(fullMarkdown)
-      const chunks = splitEntities(result.text, result.entities, 4096)
-
-      // 发送消息（第一个块更新处理中消息）
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]
-        const isFirstChunk = i === 0
-
-        if (isFirstChunk && this.adapter.editMessage) {
-          // 编辑现有消息
-          await this.adapter.editMessage(processingMsg.messageId, {
-            chatId,
-            text: chunk.text,
-            parseMode: 'entities',
-            entities: chunk.entities,
-          })
-        } else {
-          // 发送新消息
-          await this.sendMessage({
-            chatId,
-            text: chunk.text,
-            parseMode: 'entities',
-            entities: chunk.entities,
-          })
-        }
-      }
+      // 使用统一方法发送响应
+      await this.sendMarkdownWithEntities(
+        chatId,
+        infoSection,
+        '🦀 **蟹老板说：**',
+        responseText,
+        { editMessageId: processingMsg.messageId }
+      )
     } catch (err) {
       // 从 pending 中移除
       this.pendingMessages.delete(processingMsg.messageId)
 
       const errorMsg = err instanceof Error ? err.message : String(err)
-      const errorText = `${infoSection}\n${separator}\n🦀 **蟹老板说：**\n\n**请求失败**\n\n${errorMsg}`
-      const errorResult = markdownToEntities(errorText)
-
-      if (this.adapter.editMessage) {
-        await this.adapter.editMessage(processingMsg.messageId, {
-          chatId,
-          text: errorResult.text,
-          parseMode: 'entities',
-          entities: errorResult.entities
-        })
-      }
+      await this.sendMarkdownWithEntities(
+        chatId,
+        infoSection,
+        '🦀 **蟹老板说：**',
+        `**请求失败**\n\n${errorMsg}`,
+        { editMessageId: processingMsg.messageId }
+      )
     }
   }
 
