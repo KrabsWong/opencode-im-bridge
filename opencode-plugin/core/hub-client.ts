@@ -57,22 +57,36 @@ export class HubClient {
    * OpenCode message structure: { info: { role, ... }, parts: [{type: 'text', text: '...'}] }
    */
   private extractMessageContent(message: any): string {
-    if (!message) return ''
+    if (!message) {
+      this.logger.info(`[extractMessageContent] Message is null/undefined`)
+      return ''
+    }
+    
+    const keys = Object.keys(message)
+    this.logger.info(`[extractMessageContent] Message keys: ${keys.join(',')}`)
+    this.logger.info(`[extractMessageContent] Has parts: ${!!message.parts} isArray:${Array.isArray(message.parts)}`)
     
     // OpenCode uses 'parts' array at message level
     if (message.parts && Array.isArray(message.parts)) {
-      const text = message.parts
-        .filter((p: any) => p.type === 'text')
-        .map((p: any) => p.text)
-        .join('')
+      this.logger.info(`[extractMessageContent] Parts count: ${message.parts.length}`)
+      if (message.parts.length > 0) {
+        this.logger.info(`[extractMessageContent] First part type: ${message.parts[0].type}`)
+        this.logger.info(`[extractMessageContent] First part has text: ${!!message.parts[0].text}`)
+      }
+      const textParts = message.parts.filter((p: any) => p.type === 'text')
+      this.logger.info(`[extractMessageContent] Text parts count: ${textParts.length}`)
+      const text = textParts.map((p: any) => p.text).join('')
+      this.logger.info(`[extractMessageContent] Extracted text length: ${text.length}`)
       return text
     }
     
     // Fallback: direct content field
     if (message.content) {
+      this.logger.info(`[extractMessageContent] Using direct content`)
       return message.content
     }
     
+    this.logger.info(`[extractMessageContent] No content found`)
     return ''
   }
 
@@ -89,12 +103,18 @@ export class HubClient {
 
     // Log message details for debugging
     // OpenCode message structure: { info: { role }, parts: [...] }
-    this.logger.info('[autotitle] Message roles:', messages.map((m: any) => m.info?.role || m.role))
+    this.logger.info('[autotitle] Message roles:', messages.map((m: any, i: number) => `${i}:${m.info?.role || m.role}`).slice(0, 10))
 
     // Get first user message for context
-    const firstUserMsg = messages.find((m: any) => (m.info?.role || m.role) === 'user')
+    const firstUserMsgIndex = messages.findIndex((m: any) => (m.info?.role || m.role) === 'user')
+    this.logger.info(`[autotitle] First user message index:`, firstUserMsgIndex)
+    const firstUserMsg = firstUserMsgIndex >= 0 ? messages[firstUserMsgIndex] : null
+    this.logger.info(`[autotitle] First user message object:`, firstUserMsg ? 'found' : 'null')
+    if (firstUserMsg) {
+      this.logger.info(`[autotitle] First user message keys:`, Object.keys(firstUserMsg))
+    }
     const firstUserMessage = this.extractMessageContent(firstUserMsg)
-    this.logger.info(`[autotitle] First user message: "${firstUserMessage.slice(0, 100)}"`)
+    this.logger.info(`[autotitle] First user message extracted: "${firstUserMessage.slice(0, 100)}"`)
 
     // Extract key topics/keywords from all messages
     const allContent = messages
@@ -518,10 +538,18 @@ export class HubClient {
           this.logger.info(`[autotitle] Found ${messages.length} messages`)
 
           if (messages.length > 0) {
-            this.logger.info(`[autotitle] First message structure:`, JSON.stringify(messages[0]).slice(0, 200))
-            // OpenCode messages structure: { info: { role }, parts: [...] }
-            const firstMsgRole = messages[0].info?.role || messages[0].role
-            this.logger.info(`[autotitle] First message role: ${firstMsgRole}`)
+            // Check if data is properly accessible
+            this.logger.info(`[autotitle] First message type: ${typeof messages[0]}`)
+            this.logger.info(`[autotitle] First message is array: ${Array.isArray(messages[0])}`)
+            this.logger.info(`[autotitle] First message keys: ${Object.keys(messages[0]).join(',')}`)
+            this.logger.info(`[autotitle] First message has info: ${!!messages[0].info}`)
+            this.logger.info(`[autotitle] First message has parts: ${!!messages[0].parts} isArray:${Array.isArray(messages[0].parts)}`)
+            
+            // Access the data from original result if messages array is empty
+            if (!messages[0].info && messagesResult.data[0]) {
+              this.logger.info(`[autotitle] Using messagesResult.data[0] instead`)
+              this.logger.info(`[autotitle] Original data[0] keys: ${Object.keys(messagesResult.data[0]).join(',')}`)
+            }
           }
 
           // Generate intelligent title based on conversation content
