@@ -540,9 +540,9 @@ export class MessageRouter {
     const infoSection = `instance: ${instance.id}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\``
 
     // 发送"处理中"消息
-    const processingText = autoCreated 
-      ? `${infoSection}\n\n🦀 **蟹老板说**\n\n**已自动创建新 Session，正在处理请求...**`
-      : `${infoSection}\n\n🦀 **蟹老板说**\n\n**正在处理请求...**`
+    const processingText = autoCreated
+      ? `${infoSection}\n---\n🦀 **蟹老板说**\n\n**已自动创建新 Session，正在处理请求...**`
+      : `${infoSection}\n---\n🦀 **蟹老板说**\n\n**正在处理请求...**`
     const processingResult = markdownToEntities(processingText)
     const processingMsg = await this.sendMessage({
       chatId,
@@ -576,7 +576,7 @@ export class MessageRouter {
 
       // 格式化响应
       const responseText = response.text || '无响应内容'
-      const fullMarkdown = `${infoSection}\n\n🦀 **蟹老板说**\n\n${responseText}`
+      const fullMarkdown = `${infoSection}\n---\n🦀 **蟹老板说**\n\n${responseText}`
 
       // 转换为 entities 并分片发送
       const result = markdownToEntities(fullMarkdown)
@@ -610,7 +610,7 @@ export class MessageRouter {
       this.pendingMessages.delete(processingMsg.messageId)
 
       const errorMsg = err instanceof Error ? err.message : String(err)
-      const errorText = `${infoSection}\n\n🦀 **蟹老板说**\n\n**请求失败**\n\n${errorMsg}`
+      const errorText = `${infoSection}\n---\n🦀 **蟹老板说**\n\n**请求失败**\n\n${errorMsg}`
       const errorResult = markdownToEntities(errorText)
 
       if (this.adapter.editMessage) {
