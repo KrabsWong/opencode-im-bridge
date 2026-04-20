@@ -389,7 +389,6 @@ export class MessageRouter {
     const text = headerText + `**session new** - 创建新 session
 **session compact** - 压缩当前 session
 **session interrupt** - 中断当前任务
-**autotitle** - AI 自动生成标题
 
 点击按钮执行对应操作：`
 
@@ -400,8 +399,7 @@ export class MessageRouter {
           { text: 'session compact', callbackData: 'tui_command:session_compact' }
         ],
         [
-          { text: 'session interrupt', callbackData: 'tui_command:session_interrupt' },
-          { text: 'autotitle', callbackData: 'tui_command:autotitle' }
+          { text: 'session interrupt', callbackData: 'tui_command:session_interrupt' }
         ]
       ]
     }
@@ -1063,8 +1061,6 @@ export class MessageRouter {
 
           if (command === 'session_new' && response.sessionId) {
             resultText += `\n\n已自动切换到新 session。`
-          } else if (command === 'autotitle' && response.title) {
-            resultText += `\n\n新标题: **${response.title}**`
           }
 
           // 转换为 entities
