@@ -259,14 +259,12 @@ export class MessageRouter {
         break
 
       case 'select_combo':
-        // 选择组合（实例+会话）
-        const comboInstanceId = parts[1]
-        const comboSessionId = parts[2]
+        // 选择组合（实例+会话）- 使用索引
+        const comboIndex = parseInt(parts[1], 10)
         await this.handleSelectCombo(
-          callback.user.id, 
-          comboInstanceId, 
-          comboSessionId, 
-          callback.id, 
+          callback.user.id,
+          comboIndex,
+          callback.id,
           callback.chatId,
           callback.messageId
         )
@@ -432,6 +430,7 @@ export class MessageRouter {
     const keyboard: IMKeyboard = { inline: [] }
 
     // 每行放 2 个按钮
+    // 使用索引而不是完整ID，避免callback_data超过64字节限制
     for (let i = 0; i < availableCombos.length; i += 2) {
       const row: typeof keyboard.inline[0] = []
 
@@ -440,7 +439,7 @@ export class MessageRouter {
         const buttonText = this.generateComboButtonText(combo)
         row.push({
           text: buttonText,
-          callbackData: `select_combo:${combo.instanceId}:${combo.sessionId}`
+          callbackData: `select_combo:${j}`
         })
       }
 
@@ -859,20 +858,34 @@ export class MessageRouter {
 
   // 处理选择组合
   private async handleSelectCombo(
-    userId: string, 
-    instanceId: string, 
-    sessionId: string, 
-    callbackId: string, 
+    userId: string,
+    comboIndex: number,
+    callbackId: string,
     chatId: number,
     messageId?: string
   ): Promise<void> {
+    // 获取可用的最近组合列表
+    const availableCombos = this.getAvailableRecentCombos(userId)
+
+    // 检查索引是否有效
+    if (comboIndex < 0 || comboIndex >= availableCombos.length) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '选择已过期')
+      }
+      return
+    }
+
+    const combo = availableCombos[comboIndex]
+    const instanceId = combo.instanceId
+    const sessionId = combo.sessionId
+
     // 检查实例是否仍然在线
     const instance = this.registry.getInstance(instanceId)
     if (!instance) {
       if ('answerCallbackQuery' in this.adapter) {
         await (this.adapter as any).answerCallbackQuery(callbackId, '实例已断开')
       }
-      
+
       // 原地更新消息，显示错误
       if (messageId && this.adapter.editMessage) {
         await this.adapter.editMessage(messageId, {
@@ -891,8 +904,8 @@ export class MessageRouter {
     // 获取会话标题
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
-    // 更新最近组合记录
-    this.recordRecentCombo(userId, instanceId, instance.workspace.split('/').pop() || instanceId, sessionId, sessionTitle)
+    // 更新最近组合记录（刷新时间和计数）
+    this.recordRecentCombo(userId, instanceId, combo.instanceName, sessionId, sessionTitle)
 
     if ('answerCallbackQuery' in this.adapter) {
       await (this.adapter as any).answerCallbackQuery(callbackId, '切换成功')
