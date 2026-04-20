@@ -364,13 +364,14 @@ export class MessageRouter {
     const instance = this.registry.getUserInstance(userId)
     const sessionId = this.registry.getUserSession(userId)
 
-    // 获取当前实例和 session 信息
+    // 获取当前实例和 session 信息（统一代码块格式）
     let headerText = '**OpenCode 远程控制面板**\n---\n\n'
     if (instance) {
-      headerText += `instance: ${instance.id}\n`
+      headerText += `📁 \`${instance.id}\`\n`
       if (sessionId) {
         const sessionTitle = await this.getSessionTitle(instance.id, sessionId)
-        headerText += `${sessionTitle}:\`${sessionId}\`\n`
+        headerText += `📋 \`${sessionTitle}\`\n`
+        headerText += `🔑 \`${sessionId}\`\n`
       }
       headerText += '\n'
     }
@@ -720,8 +721,8 @@ export class MessageRouter {
       sessionTitle
     )
 
-    // 构建消息前缀（分三行：instance、title、sessionId）
-    const infoSection = `instance: ${instance.id}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\``
+    // 构建消息前缀（统一使用代码块格式，视觉更整齐）
+    const infoSection = `📁 \`${instance.id}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
 
     // 发送"处理中"消息
     const processingText = autoCreated
@@ -925,8 +926,8 @@ export class MessageRouter {
       await (this.adapter as any).answerCallbackQuery(callbackId, '切换成功')
     }
 
-    // 构建选中状态的消息
-    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\ninstance: ${instanceId}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\``
+    // 构建选中状态的消息（统一代码块格式）
+    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\n📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
 
     // 原地更新消息
     if (messageId && this.adapter.editMessage) {
@@ -992,12 +993,13 @@ export class MessageRouter {
             sessionId = response.sessionId
           }
 
-          // 构建结果消息
+          // 构建结果消息（统一代码块格式）
           const sessionTitle = sessionId ? await this.getSessionTitle(instance.id, sessionId) : '未命名'
           let resultText = `**OpenCode 远程控制面板**\n---\n\n`
-          resultText += `instance: ${instance.id}\n`
+          resultText += `📁 \`${instance.id}\`\n`
           if (sessionId) {
-            resultText += `${sessionTitle}:\`${sessionId}\`\n`
+            resultText += `📋 \`${sessionTitle}\`\n`
+            resultText += `🔑 \`${sessionId}\`\n`
           }
           resultText += `\n**命令执行成功**\n\n操作: ${command}`
 
@@ -1065,8 +1067,8 @@ export class MessageRouter {
     // 获取 session 标题
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
-    // 构建消息文本
-    let text = `instance: ${instanceId}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\`\n\n`
+    // 构建消息文本（统一代码块格式）
+    let text = `📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\`\n\n`
     text += `🦀 **蟹老板需要您的确认**\n\n`
     text += `**${question.header}**\n\n`
     text += `${question.question}\n\n`
@@ -1131,8 +1133,8 @@ export class MessageRouter {
     // 获取 session 标题
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
-    // 构建消息文本
-    let text = `instance: ${instanceId}\nTitle: ${sessionTitle}\nSession Id: \`${sessionId}\`\n\n`
+    // 构建消息文本（统一代码块格式）
+    let text = `📁 \`${instanceId}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\`\n\n`
     text += `🦀 **蟹老板请求权限**\n\n`
     text += `**权限:** ${permission}\n\n`
 
