@@ -53,6 +53,30 @@ export class HubClient {
   }
 
   /**
+   * Extract text content from OpenCode message format
+   * Handles both { content: string } and { parts: [{type: 'text', text: '...'}] } formats
+   */
+  private extractMessageContent(message: any): string {
+    if (!message) return ''
+    
+    // Direct content field
+    if (message.content) {
+      return message.content
+    }
+    
+    // OpenCode parts format
+    if (message.parts && Array.isArray(message.parts)) {
+      return message.parts
+        .filter((p: any) => p.type === 'text')
+        .map((p: any) => p.text)
+        .join('')
+    }
+    
+    // Unknown format, try to stringify
+    return ''
+  }
+
+  /**
    * Generate intelligent title based on conversation messages
    */
   private generateSmartTitle(messages: any[]): string {
@@ -64,16 +88,17 @@ export class HubClient {
     }
 
     // Log message details for debugging
-    this.logger.info('[autotitle] Messages:', messages.map((m: any) => ({ role: m.role, content: m.content?.slice(0, 50) })))
+    this.logger.info('[autotitle] Message roles:', messages.map((m: any) => m.role))
 
     // Get first user message for context
-    const firstUserMessage = messages.find((m: any) => m.role === 'user')?.content || ''
+    const firstUserMsg = messages.find((m: any) => m.role === 'user')
+    const firstUserMessage = this.extractMessageContent(firstUserMsg)
     this.logger.info(`[autotitle] First user message: "${firstUserMessage.slice(0, 100)}"`)
 
     // Extract key topics/keywords from all messages
     const allContent = messages
       .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .map((m: any) => m.content)
+      .map((m: any) => this.extractMessageContent(m))
       .join(' ')
 
     // Try to extract main topic from first user message
@@ -489,8 +514,13 @@ export class HubClient {
           this.logger.info(`[autotitle] Found ${messages.length} messages`)
 
           if (messages.length > 0) {
+            this.logger.info(`[autotitle] First message keys:`, Object.keys(messages[0]))
             this.logger.info(`[autotitle] First message role: ${messages[0].role}`)
-            this.logger.info(`[autotitle] First message content preview:`, messages[0].content?.slice(0, 100))
+            // OpenCode messages use 'parts' array, not 'content' string
+            const firstMsgContent = messages[0].content || 
+              messages[0].parts?.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('') ||
+              ''
+            this.logger.info(`[autotitle] First message content preview:`, firstMsgContent.slice(0, 100))
           }
 
           // Generate intelligent title based on conversation content
@@ -580,13 +610,11 @@ export class HubClient {
     try {
       const client = (this.input.client as any)._client || this.input.client
 
-      // Map value to OpenCode Permission.Reply format
-      // 'once' -> { type: 'once' }
-      // 'always' -> { type: 'always' }
-      // 'reject' -> { type: 'reject' }
-      const replyValue = value === 'once' ? { type: 'once' } :
-                        value === 'always' ? { type: 'always' } :
-                        { type: 'reject' }
+      // Permission.Reply is a string literal: "once" | "always" | "reject"
+      // Not an object!
+      const replyValue = value === 'once' ? 'once' :
+                        value === 'always' ? 'always' :
+                        'reject'
 
       this.logger.info(`[handlePermissionReply] Sending permission reply:`, { requestId, reply: replyValue })
 
