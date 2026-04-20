@@ -375,7 +375,7 @@ export class MessageRouter {
     const sessionId = this.registry.getUserSession(userId)
 
     // 获取当前实例和 session 信息（统一代码块格式）
-    let headerText = '**OpenCode 远程控制面板**\n---\n\n'
+    let headerText = '**OpenCode 远程控制面板**\n──────────────\n\n'
     if (instance) {
       headerText += `📁 \`${instance.id}\`\n`
       if (sessionId) {
@@ -772,10 +772,11 @@ export class MessageRouter {
     // 构建消息前缀（统一使用代码块格式，视觉更整齐）
     const infoSection = `📁 \`${instance.id}\`\n📋 \`${sessionTitle}\`\n🔑 \`${sessionId}\``
 
-    // 发送"处理中"消息
+    // 发送"处理中"消息（使用显式分隔线字符）
+    const separator = '──────────────'
     const processingText = autoCreated
-      ? `${infoSection}\n---\n🦀 **蟹老板说**\n\n**已自动创建新 Session，正在处理请求...**`
-      : `${infoSection}\n---\n🦀 **蟹老板说**\n\n**正在处理请求...**`
+      ? `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**已自动创建新 Session，正在处理请求...**`
+      : `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**正在处理请求...**`
     const processingResult = markdownToEntities(processingText)
     const processingMsg = await this.sendMessage({
       chatId,
@@ -809,7 +810,7 @@ export class MessageRouter {
 
       // 格式化响应
       const responseText = response.text || '无响应内容'
-      const fullMarkdown = `${infoSection}\n---\n🦀 **蟹老板说**\n\n${responseText}`
+      const fullMarkdown = `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n${responseText}`
 
       // 转换为 entities 并分片发送
       const result = markdownToEntities(fullMarkdown)
@@ -843,7 +844,7 @@ export class MessageRouter {
       this.pendingMessages.delete(processingMsg.messageId)
 
       const errorMsg = err instanceof Error ? err.message : String(err)
-      const errorText = `${infoSection}\n---\n🦀 **蟹老板说**\n\n**请求失败**\n\n${errorMsg}`
+      const errorText = `${infoSection}\n${separator}\n🦀 **蟹老板说**\n\n**请求失败**\n\n${errorMsg}`
       const errorResult = markdownToEntities(errorText)
 
       if (this.adapter.editMessage) {
@@ -1052,7 +1053,7 @@ export class MessageRouter {
 
           // 构建结果消息（统一代码块格式）
           const sessionTitle = sessionId ? await this.getSessionTitle(instance.id, sessionId) : '未命名'
-          let resultText = `**OpenCode 远程控制面板**\n---\n\n`
+          let resultText = `**OpenCode 远程控制面板**\n──────────────\n\n`
           resultText += `📁 \`${instance.id}\`\n`
           if (sessionId) {
             resultText += `📋 \`${sessionTitle}\`\n`
