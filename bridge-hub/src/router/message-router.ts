@@ -101,15 +101,29 @@ export class MessageRouter {
 
   // 生成组合按钮文本
   private generateComboButtonText(combo: RecentCombo): string {
-    // 缩写：实例名取前 8 字符，会话名取前 10 字符
-    const instAbbr = combo.instanceName.length > 8 
-      ? combo.instanceName.slice(0, 6) + '..' 
+    // 缩写：实例名取前 12 字符，会话名取前 15 字符
+    const instAbbr = combo.instanceName.length > 12
+      ? combo.instanceName.slice(0, 10) + '..'
       : combo.instanceName
-    const sessAbbr = combo.sessionTitle.length > 10 
-      ? combo.sessionTitle.slice(0, 8) + '..' 
+    const sessAbbr = combo.sessionTitle.length > 15
+      ? combo.sessionTitle.slice(0, 13) + '..'
       : combo.sessionTitle
-    
+
     return `${instAbbr}|${sessAbbr}`
+  }
+
+  // 格式化时间显示
+  private formatTimeAgo(timestamp: number): string {
+    const now = Date.now()
+    const diff = now - timestamp
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+
+    if (minutes < 1) return '刚刚'
+    if (minutes < 60) return `${minutes}分钟前`
+    if (hours < 24) return `${hours}小时前`
+    return `${days}天前`
   }
 
   // 检查用户是否有权限
@@ -403,7 +417,17 @@ export class MessageRouter {
       return
     }
 
-    let text = '🚀 **快速切换**\n\n点击按钮快速切换到对应会话：\n\n'
+    let text = '🚀 **快速切换**\n\n最近使用的会话组合：\n\n'
+
+    // 在文字中详细展示所有组合
+    availableCombos.forEach((combo, index) => {
+      const timeAgo = this.formatTimeAgo(combo.lastUsedAt)
+      text += `${index + 1}. **${combo.instanceName}**\n`
+      text += `   会话: ${combo.sessionTitle}\n`
+      text += `   使用: ${timeAgo} (${combo.useCount}次)\n\n`
+    })
+
+    text += '点击按钮快速切换：'
 
     const keyboard: IMKeyboard = { inline: [] }
 
