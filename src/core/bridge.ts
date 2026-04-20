@@ -11,7 +11,7 @@ import type {
 import type { PluginInput } from "@opencode-ai/plugin"
 import { IMBridgeLogger } from "./logger.js"
 import { markdownToTelegramHtml } from "./markdown.js"
-import { markdownToEntities, splitEntities, utf16Length, type MarkdownConvertResult } from "./markdown-entities.js"
+import { markdownToEntities, splitEntities, type MarkdownConvertResult } from "./markdown-entities.js"
 
 interface PendingRequest {
   type: "question" | "permission"
@@ -1646,25 +1646,18 @@ ID: <code>${sessionId}</code>
       editMessageId?: string
     }
   ): Promise<void> {
-    // 1. 转换 Markdown 为 entities
-    const result = markdownToEntities(markdownContent)
-    
-    // 2. 构建完整消息
+    // 1. 构建完整 Markdown 文本（包含 prefix、title 和 content）
     const prefixPart = prefix ? prefix + '\n' : ''
     const titlePart = title ? title + '\n\n' : ''
-    const fullText = prefixPart + titlePart + result.text
+    const fullMarkdown = prefixPart + titlePart + markdownContent
     
-    // 3. 调整 entities 偏移（添加前缀长度）
-    const prefixOffset = utf16Length(prefixPart) + utf16Length(titlePart)
-    const adjustedEntities = result.entities.map(ent => ({
-      ...ent,
-      offset: ent.offset + prefixOffset
-    }))
+    // 2. 转换整个 Markdown 为 entities
+    const result = markdownToEntities(fullMarkdown)
     
-    // 4. 分割长消息（Telegram 限制 4096 UTF-16 字符）
-    const chunks = splitEntities(fullText, adjustedEntities, 4096)
+    // 3. 分割长消息（Telegram 限制 4096 UTF-16 字符）
+    const chunks = splitEntities(result.text, result.entities, 4096)
     
-    // 5. 发送消息
+    // 4. 发送消息
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]
       const isFirstChunk = i === 0
