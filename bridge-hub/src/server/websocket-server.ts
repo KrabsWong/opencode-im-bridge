@@ -129,10 +129,12 @@ export class InstanceRegistry {
 
     return new Promise((resolve, reject) => {
       const requestId = generateRequestId()
+      
+      // 使用更长的超时时间（5分钟），因为AI响应可能需要较长时间
       const timeout = setTimeout(() => {
         cleanup()
-        reject(new Error(`Request to ${instanceId} timeout`))
-      }, 60000) // 60秒超时
+        reject(new Error(`Request to ${instanceId} timeout after 5 minutes`))
+      }, 300000) // 5分钟超时
 
       const handler = (event: MessageEvent) => {
         try {
