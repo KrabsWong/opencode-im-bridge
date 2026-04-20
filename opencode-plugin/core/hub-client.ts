@@ -59,20 +59,30 @@ export class HubClient {
   private extractMessageContent(message: any): string {
     if (!message) return ''
     
+    this.logger.info(`[extractMessageContent] Message structure:`, JSON.stringify(message))
+    
     // Direct content field
     if (message.content) {
+      this.logger.info(`[extractMessageContent] Found direct content:`, message.content.slice(0, 50))
       return message.content
     }
     
     // OpenCode parts format
     if (message.parts && Array.isArray(message.parts)) {
-      return message.parts
+      this.logger.info(`[extractMessageContent] Found parts array with ${message.parts.length} items`)
+      message.parts.forEach((p: any, i: number) => {
+        this.logger.info(`[extractMessageContent] Part ${i}:`, { type: p.type, text: p.text?.slice(0, 50) })
+      })
+      const text = message.parts
         .filter((p: any) => p.type === 'text')
         .map((p: any) => p.text)
         .join('')
+      this.logger.info(`[extractMessageContent] Extracted text from parts:`, text.slice(0, 50))
+      return text
     }
     
-    // Unknown format, try to stringify
+    // Unknown format
+    this.logger.info(`[extractMessageContent] No content or parts found, keys:`, Object.keys(message))
     return ''
   }
 
