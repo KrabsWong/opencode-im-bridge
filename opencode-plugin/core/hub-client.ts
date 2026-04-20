@@ -534,26 +534,40 @@ export class HubClient {
           }
 
           // OpenCode API returns messages directly in data (array), not data.messages
-          const messages = Array.isArray(messagesResult.data) ? messagesResult.data : (messagesResult.data?.messages || [])
+          // Keep reference to original data to avoid any transformation issues
+          const rawData = messagesResult.data
+          this.logger.info(`[autotitle] Raw data type: ${typeof rawData}`)
+          this.logger.info(`[autotitle] Raw data is array: ${Array.isArray(rawData)}`)
+          
+          let messages: any[] = []
+          if (Array.isArray(rawData)) {
+            messages = rawData
+          } else if (rawData && typeof rawData === 'object') {
+            // Try different possible locations for messages array
+            messages = rawData.messages || rawData.items || rawData.data || []
+          }
+          
           this.logger.info(`[autotitle] Found ${messages.length} messages`)
 
           if (messages.length > 0) {
-            // Check if data is properly accessible
-            this.logger.info(`[autotitle] First message type: ${typeof messages[0]}`)
-            this.logger.info(`[autotitle] First message is array: ${Array.isArray(messages[0])}`)
-            this.logger.info(`[autotitle] First message keys: ${Object.keys(messages[0]).join(',')}`)
-            this.logger.info(`[autotitle] First message has info: ${!!messages[0].info}`)
-            this.logger.info(`[autotitle] First message has parts: ${!!messages[0].parts} isArray:${Array.isArray(messages[0].parts)}`)
+            // Access first item directly from original data if possible
+            const firstItem = Array.isArray(rawData) ? rawData[0] : messages[0]
+            this.logger.info(`[autotitle] First item type: ${typeof firstItem}`)
+            this.logger.info(`[autotitle] First item is null: ${firstItem === null}`)
+            this.logger.info(`[autotitle] First item keys: ${firstItem ? Object.keys(firstItem).join(',') : 'N/A'}`)
             
-            // Access the data from original result if messages array is empty
-            if (!messages[0].info && messagesResult.data[0]) {
-              this.logger.info(`[autotitle] Using messagesResult.data[0] instead`)
-              this.logger.info(`[autotitle] Original data[0] keys: ${Object.keys(messagesResult.data[0]).join(',')}`)
+            if (firstItem && firstItem.info) {
+              this.logger.info(`[autotitle] First item info.role: ${firstItem.info.role}`)
+            }
+            if (firstItem && firstItem.parts) {
+              this.logger.info(`[autotitle] First item parts length: ${firstItem.parts.length}`)
             }
           }
 
           // Generate intelligent title based on conversation content
-          const title = this.generateSmartTitle(messages)
+          // Pass the raw data array directly if messages is empty
+          const messagesToProcess = messages.length > 0 ? messages : (Array.isArray(rawData) ? rawData : [])
+          const title = this.generateSmartTitle(messagesToProcess)
           this.logger.info(`[autotitle] Generated title: "${title}"`)
 
           // Update session title via API
