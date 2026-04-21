@@ -556,8 +556,9 @@ export class DiscordAdapter implements IMAdapter {
         payload.components = this.convertKeyboardToComponents(message.replyMarkup)
       }
 
-      console.log(`[Discord] Sending payload to thread ${threadId}:`)
-      console.log(JSON.stringify(payload, null, 2).substring(0, 500))
+      console.log(`[Discord] Chunk ${i + 1}/${chunks.length} content (first 300 chars):`)
+      console.log(chunks[i].substring(0, 300))
+      console.log(`[Discord] Sending payload to thread ${threadId} (length: ${JSON.stringify(payload).length})`)
       
       const response = await this.fetchWithAuth<{ id: string }>(
         `/channels/${threadId}/messages`,
