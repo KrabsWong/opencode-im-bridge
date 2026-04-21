@@ -212,14 +212,15 @@ export class DiscordAdapter implements IMAdapter {
         
         // 发送重新连接通知
         try {
-          await this.fetchWithAuth(`/channels/${threadId}/messages`, {
+          const msgResponse = await this.fetchWithAuth<{id: string}>(`/channels/${threadId}/messages`, {
             method: 'POST',
             body: JSON.stringify({
               content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
             })
           })
+          console.log(`[Discord] ✓ Sent reconnection message to thread ${threadId}, msgId: ${msgResponse.id}`)
         } catch (msgError) {
-          console.warn(`[Discord] Failed to send reconnection message:`, msgError)
+          console.error(`[Discord] ✗ Failed to send reconnection message:`, msgError)
         }
         
         return threadId
