@@ -6,8 +6,6 @@ import type {
   IMUser,
   IMKeyboard
 } from '../types/index.js'
-import * as fs from 'fs'
-import * as path from 'path'
 
 // Discord 类型定义
 interface DiscordThread {
@@ -110,7 +108,6 @@ export class DiscordAdapter implements IMAdapter {
   private pollInterval: NodeJS.Timeout | null = null
   private lastMessageId: string | null = null
   private chatIdCounter: number = 1000 // 递增计数器，保证 chatId 唯一
-  private dataFilePath: string = '' // 持久化文件路径
 
   constructor() {
     this.botToken = ''
@@ -127,95 +124,29 @@ export class DiscordAdapter implements IMAdapter {
     if (!this.botToken || !this.channelId) {
       throw new Error('Discord adapter requires botToken and channelId')
     }
-
-    // 设置持久化文件路径
-    this.dataFilePath = path.join(process.cwd(), 'discord-threads.json')
-    
-    // 加载已保存的线程映射
-    this.loadThreadMappings()
-  }
-
-  /**
-   * 从文件加载线程映射
-   */
-  private loadThreadMappings(): void {
-    try {
-      if (fs.existsSync(this.dataFilePath)) {
-        const data = JSON.parse(fs.readFileSync(this.dataFilePath, 'utf-8'))
-        
-        // 恢复 instanceThreads
-        if (data.instanceThreads) {
-          for (const [instanceId, mapping] of Object.entries(data.instanceThreads)) {
-            this.instanceThreads.set(instanceId, mapping as ThreadMapping)
-            this.chatIdToThread.set((mapping as ThreadMapping).numberChatId, (mapping as ThreadMapping).threadId)
-          }
-        }
-        
-        // 恢复计数器
-        if (data.chatIdCounter) {
-          this.chatIdCounter = data.chatIdCounter
-        }
-        
-        console.log(`[Discord] Loaded ${this.instanceThreads.size} thread mappings from ${this.dataFilePath}`)
-      }
-    } catch (error) {
-      console.warn(`[Discord] Failed to load thread mappings:`, error)
-    }
-  }
-
-  /**
-   * 保存线程映射到文件
-   */
-  private saveThreadMappings(): void {
-    try {
-      const data = {
-        instanceThreads: Object.fromEntries(this.instanceThreads),
-        chatIdCounter: this.chatIdCounter,
-        savedAt: Date.now()
-      }
-      fs.writeFileSync(this.dataFilePath, JSON.stringify(data, null, 2), 'utf-8')
-      console.log(`[Discord] Saved ${this.instanceThreads.size} thread mappings to ${this.dataFilePath}`)
-    } catch (error) {
-      console.warn(`[Discord] Failed to save thread mappings:`, error)
-    }
   }
 
   /**
    * 获取或创建 Instance 对应的 Thread
+   * 注意：重启后内存映射丢失，会在同一会话中复用 Thread
    */
   async getOrCreateThread(instanceId: string, instanceName: string): Promise<string> {
-    const threadName = instanceName.split('/').pop() || instanceId
-    
-    // 1. 检查内存中是否已有映射
+    // 检查内存中是否已有映射（同一会话内复用）
     const existing = this.instanceThreads.get(instanceId)
     if (existing) {
-      console.log(`[Discord] Found memory mapping for ${instanceId}: thread ${existing.threadId}`)
+      console.log(`[Discord] Found existing mapping for ${instanceId}: thread ${existing.threadId}`)
       
-      // 尝试访问 thread（可能已归档）
+      // 尝试访问 thread
       const thread = await this.getThread(existing.threadId)
       if (thread) {
         if (!thread.thread_metadata?.archived) {
           // Thread 活跃，直接复用
           existing.lastActivity = Date.now()
           console.log(`[Discord] Reusing active thread for ${instanceId}: ${existing.threadId}`)
-          
-          // 发送重新连接通知
-          try {
-            await this.fetchWithAuth(`/channels/${existing.threadId}/messages`, {
-              method: 'POST',
-              body: JSON.stringify({
-                content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
-              })
-            })
-          } catch (msgError) {
-            console.warn(`[Discord] Failed to send reconnection message:`, msgError)
-          }
-          
-          this.saveThreadMappings()
           return existing.threadId
         } else {
-          // Thread 已归档，尝试取消归档
-          console.log(`[Discord] Thread ${existing.threadId} is archived, attempting to unarchive...`)
+          // Thread 已归档（超过7天未活动），尝试取消归档
+          console.log(`[Discord] Thread ${existing.threadId} is archived (7-day auto-archive), attempting to unarchive...`)
           try {
             await this.fetchWithAuth(`/channels/${existing.threadId}`, {
               method: 'PATCH',
@@ -223,7 +154,6 @@ export class DiscordAdapter implements IMAdapter {
             })
             console.log(`[Discord] ✓ Successfully unarchived thread: ${existing.threadId}`)
             existing.lastActivity = Date.now()
-            this.saveThreadMappings()
             return existing.threadId
           } catch (unarchiveError) {
             console.warn(`[Discord] Failed to unarchive thread ${existing.threadId}, will create new one:`, unarchiveError)
@@ -237,41 +167,8 @@ export class DiscordAdapter implements IMAdapter {
       }
     }
 
-    // 2. 尝试通过 thread ID 直接访问已知的 threads（从文件加载的）
-    // 遍历所有已保存的 thread，尝试按名称匹配
-    for (const [savedInstanceId, mapping] of this.instanceThreads) {
-      if (mapping.threadId) {
-        try {
-          const thread = await this.getThread(mapping.threadId)
-          if (thread && thread.name === threadName) {
-            console.log(`[Discord] Found matching thread by name: ${mapping.threadId}`)
-            
-            // 取消归档如果需要
-            if (thread.thread_metadata?.archived) {
-              await this.fetchWithAuth(`/channels/${mapping.threadId}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ archived: false })
-              })
-            }
-            
-            // 更新映射到新 instanceId
-            this.instanceThreads.set(instanceId, {
-              ...mapping,
-              instanceId,
-              lastActivity: Date.now()
-            })
-            this.chatIdToThread.set(mapping.numberChatId, mapping.threadId)
-            this.saveThreadMappings()
-            return mapping.threadId
-          }
-        } catch (error) {
-          // 忽略错误，继续查找
-        }
-      }
-    }
-
-    // 3. 创建新的 thread
-    console.log(`[Discord] No existing thread found for ${instanceId}, creating new one`)
+    // 创建新的 thread
+    console.log(`[Discord] Creating new thread for ${instanceId}`)
     return this.createThread(instanceId, instanceName)
   }
 
@@ -338,10 +235,6 @@ export class DiscordAdapter implements IMAdapter {
     this.chatIdToThread.set(numberChatId, thread.id)
 
     console.log(`[Discord] Created thread for instance ${instanceId}: ${thread.id} (chatId: ${numberChatId})`)
-    
-    // 保存映射到文件
-    this.saveThreadMappings()
-    
     return thread.id
   }
 
@@ -357,23 +250,22 @@ export class DiscordAdapter implements IMAdapter {
   }
 
   /**
-   * 归档 Thread
+   * 发送断开连接通知（不归档，依赖 Discord 7 天自动归档）
    */
-  async archiveThread(instanceId: string): Promise<void> {
+  async sendDisconnectNotification(instanceId: string): Promise<void> {
     const mapping = this.instanceThreads.get(instanceId)
     if (!mapping) return
 
     try {
-      await this.fetchWithAuth(`/channels/${mapping.threadId}`, {
-        method: 'PATCH',
+      await this.fetchWithAuth(`/channels/${mapping.threadId}/messages`, {
+        method: 'POST',
         body: JSON.stringify({
-          archived: true,
-          locked: false
+          content: `🔴 **Instance Disconnected**\n⏰ ${new Date().toLocaleString()}\n\n_Thread will auto-archive after 7 days of inactivity_`
         })
       })
-      console.log(`[Discord] Archived thread for instance ${instanceId}`)
+      console.log(`[Discord] Sent disconnect notification for instance ${instanceId}`)
     } catch (error) {
-      console.error(`[Discord] Failed to archive thread:`, error)
+      console.warn(`[Discord] Failed to send disconnect notification:`, error)
     }
   }
 

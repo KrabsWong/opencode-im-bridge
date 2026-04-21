@@ -120,11 +120,11 @@ async function main() {
     })
   }
 
-  // 设置 instance 断开处理器（用于归档 Discord thread）
+  // 设置 instance 断开处理器（发送断开通知，但不归档，依赖 Discord 7 天自动归档）
   if (adapter instanceof DiscordAdapter) {
     wsServer.onInstanceDisconnect((instanceId) => {
-      console.log(`[Discord] Instance ${instanceId} disconnected, archiving thread...`)
-      adapter.archiveThread(instanceId).catch(console.error)
+      console.log(`[Discord] Instance ${instanceId} disconnected, sending disconnect notification...`)
+      adapter.sendDisconnectNotification(instanceId).catch(console.error)
     })
   }
 
