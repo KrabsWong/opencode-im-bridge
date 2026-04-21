@@ -587,18 +587,14 @@ export class DiscordAdapter implements IMAdapter {
       switch (type) {
         case 'pre':
           // 代码块，恢复 ```language\ncode\n``` 格式
+          // 检查内容中是否包含 ```，如果有则使用更多反引号避免冲突
+          const hasTripleBackticks = content.includes('```')
+          const fence = hasTripleBackticks ? '````' : '```'
+          
           if (language) {
-            replacement = `
-\`\`\`${language}
-${content}
-\`\`\`
-`
+            replacement = `${fence}${language}\n${content}\n${fence}`
           } else {
-            replacement = `
-\`\`\`
-${content}
-\`\`\`
-`
+            replacement = `${fence}\n${content}\n${fence}`
           }
           break
         case 'code':
