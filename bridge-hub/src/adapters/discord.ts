@@ -235,7 +235,7 @@ export class DiscordAdapter implements IMAdapter {
   /**
    * 通过 Guild API 按名称查找 Thread
    * 返回 threadId 和是否已归档
-   * 会验证 Thread 是否真的可用（防止已删除但仍返回的情况）
+   * 会验证 Thread 是否真的可用（包括权限检查）
    */
   private async findThreadByName(threadName: string): Promise<{ threadId: string; isArchived: boolean } | undefined> {
     if (!this.guildId) {
@@ -260,15 +260,35 @@ export class DiscordAdapter implements IMAdapter {
         if (thread.parent_id === this.channelId && thread.name === threadName) {
           console.log(`[Discord] Found potential match: ${thread.id} (name: "${thread.name}"), verifying accessibility...`)
           
-          // 验证 Thread 是否真的可用（可能被删除但仍返回）
+          // 验证1: Thread 是否存在
           const verifiedThread = await this.getThread(thread.id)
           if (!verifiedThread) {
-            console.log(`[Discord] Thread ${thread.id} found in list but not accessible (may be deleted), skipping`)
+            console.log(`[Discord] Thread ${thread.id} found in list but getThread failed, skipping`)
+            continue
+          }
+          
+          // 验证2: Bot 是否有权限访问（尝试加入 Thread）
+          try {
+            await this.fetchWithAuth(`/channels/${thread.id}/thread-members/@me`, {
+              method: 'PUT'
+            })
+            console.log(`[Discord] ✓ Successfully joined thread ${thread.id}`)
+          } catch (joinError) {
+            console.log(`[Discord] Thread ${thread.id} exists but cannot join (no permission), skipping`)
+            continue
+          }
+          
+          // 验证3: 尝试读取消息（确认有读取权限）
+          try {
+            await this.fetchWithAuth(`/channels/${thread.id}/messages?limit=1`)
+            console.log(`[Discord] ✓ Can read messages from thread ${thread.id}`)
+          } catch (readError) {
+            console.log(`[Discord] Thread ${thread.id} joined but cannot read messages (no permission), skipping`)
             continue
           }
           
           const isArchived = verifiedThread.thread_metadata?.archived || false
-          console.log(`[Discord] ✓ Verified accessible thread: ${thread.id} (archived: ${isArchived})`)
+          console.log(`[Discord] ✓ Fully verified accessible thread: ${thread.id} (archived: ${isArchived})`)
           return { threadId: thread.id, isArchived }
         }
       }
