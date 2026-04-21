@@ -234,6 +234,7 @@ export class DiscordAdapter implements IMAdapter {
   /**
    * 通过 Guild API 按名称查找 Thread
    * 返回 threadId 和是否已归档
+   * 会验证 Thread 是否真的可用（防止已删除但仍返回的情况）
    */
   private async findThreadByName(threadName: string): Promise<{ threadId: string; isArchived: boolean } | undefined> {
     if (!this.guildId) {
@@ -256,13 +257,22 @@ export class DiscordAdapter implements IMAdapter {
       for (const thread of response.threads || []) {
         // 只找属于当前频道的 thread
         if (thread.parent_id === this.channelId && thread.name === threadName) {
-          const isArchived = thread.thread_metadata?.archived || false
-          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: "${thread.name}", archived: ${isArchived})`)
+          console.log(`[Discord] Found potential match: ${thread.id} (name: "${thread.name}"), verifying accessibility...`)
+          
+          // 验证 Thread 是否真的可用（可能被删除但仍返回）
+          const verifiedThread = await this.getThread(thread.id)
+          if (!verifiedThread) {
+            console.log(`[Discord] Thread ${thread.id} found in list but not accessible (may be deleted), skipping`)
+            continue
+          }
+          
+          const isArchived = verifiedThread.thread_metadata?.archived || false
+          console.log(`[Discord] ✓ Verified accessible thread: ${thread.id} (archived: ${isArchived})`)
           return { threadId: thread.id, isArchived }
         }
       }
       
-      console.log(`[Discord] ✗ No thread found with name "${threadName}" in channel ${this.channelId}`)
+      console.log(`[Discord] ✗ No accessible thread found with name "${threadName}" in channel ${this.channelId}`)
     } catch (error) {
       console.error(`[Discord] Failed to query guild threads:`, error)
     }
