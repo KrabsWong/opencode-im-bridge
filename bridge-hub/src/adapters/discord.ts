@@ -523,8 +523,11 @@ export class DiscordAdapter implements IMAdapter {
     // 如果是 entities 模式，尝试转换回 Markdown 以保留代码高亮
     let processedText = message.text
     if (message.parseMode === 'entities' && message.entities) {
+      console.log(`[Discord] Original text (first 200 chars): ${message.text.substring(0, 200)}`)
+      console.log(`[Discord] Entities count: ${message.entities.length}`)
+      console.log(`[Discord] Entities: ${JSON.stringify(message.entities)}`)
       processedText = this.entitiesToMarkdown(message.text, message.entities)
-      console.log(`[Discord] Converted entities back to Markdown for code highlighting`)
+      console.log(`[Discord] Converted text (first 200 chars): ${processedText.substring(0, 200)}`)
     }
 
     // Embed description 上限 4096，留 96 字符余量
@@ -553,6 +556,9 @@ export class DiscordAdapter implements IMAdapter {
         payload.components = this.convertKeyboardToComponents(message.replyMarkup)
       }
 
+      console.log(`[Discord] Sending payload to thread ${threadId}:`)
+      console.log(JSON.stringify(payload, null, 2).substring(0, 500))
+      
       const response = await this.fetchWithAuth<{ id: string }>(
         `/channels/${threadId}/messages`,
         { method: 'POST', body: JSON.stringify(payload) }
