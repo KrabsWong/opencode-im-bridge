@@ -150,15 +150,6 @@ export class DiscordAdapter implements IMAdapter {
     const existingThreadId = await this.findExistingThread(threadName)
     if (existingThreadId) {
       console.log(`[Discord] Found existing thread in Discord for ${instanceId}: ${existingThreadId}`)
-      // 重新加入 thread
-      try {
-        await this.fetchWithAuth(`/channels/${existingThreadId}/thread-members/@me`, {
-          method: 'PUT'
-        })
-        console.log(`[Discord] Re-joined existing thread`)
-      } catch (joinError) {
-        console.warn(`[Discord] Warning: Failed to join existing thread:`, joinError)
-      }
       
       // 恢复映射关系
       this.chatIdCounter++
@@ -172,6 +163,29 @@ export class DiscordAdapter implements IMAdapter {
       }
       this.instanceThreads.set(instanceId, mapping)
       this.chatIdToThread.set(numberChatId, existingThreadId)
+      
+      // 重新加入 thread
+      try {
+        await this.fetchWithAuth(`/channels/${existingThreadId}/thread-members/@me`, {
+          method: 'PUT'
+        })
+        console.log(`[Discord] Re-joined existing thread`)
+      } catch (joinError) {
+        console.warn(`[Discord] Warning: Failed to join existing thread:`, joinError)
+      }
+      
+      // 在 Thread 内发送重新连接通知（不在频道发送）
+      try {
+        await this.fetchWithAuth(`/channels/${existingThreadId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({
+            content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
+          })
+        })
+        console.log(`[Discord] Sent reconnection message to thread`)
+      } catch (msgError) {
+        console.warn(`[Discord] Failed to send reconnection message:`, msgError)
+      }
       
       return existingThreadId
     }
