@@ -108,23 +108,30 @@ async function main() {
     router.handleInstanceEvent(instanceId, eventType, data).catch(console.error)
   })
 
-  // 设置 instance 连接处理器（用于创建 Discord thread）
+  // 设置 Discord instance 连接/断开处理器
   if (adapter instanceof DiscordAdapter) {
+    // 记录曾经连接过的 instance（区分首次连接和重连）
+    const seenInstances = new Set<string>()
+    // 保存 workspace 信息以便在 disconnect 时使用
+    const instanceWorkspaces = new Map<string, string>()
+
     wsServer.onInstanceConnect((instanceId, workspace) => {
-      console.log(`[Discord] Instance ${instanceId} connected, creating thread...`)
-      adapter.getOrCreateThread(instanceId, workspace).then((threadId) => {
-        console.log(`[Discord] Thread created for ${instanceId}: ${threadId}`)
+      instanceWorkspaces.set(instanceId, workspace)
+      const isReconnect = seenInstances.has(instanceId)
+      seenInstances.add(instanceId)
+      const reason = isReconnect ? 'reconnect' : 'connect'
+      console.log(`[Discord] Instance ${instanceId} ${reason}ed (workspace: ${workspace})`)
+      adapter.getOrCreateThread(instanceId, workspace, reason).then((threadId) => {
+        console.log(`[Discord] Thread ready for ${instanceId}: ${threadId}`)
       }).catch((err) => {
-        console.error(`[Discord] Failed to create thread for ${instanceId}:`, err)
+        console.error(`[Discord] Failed to get/create thread for ${instanceId}:`, err)
       })
     })
-  }
 
-  // 设置 instance 断开处理器（发送断开通知，但不归档，依赖 Discord 7 天自动归档）
-  if (adapter instanceof DiscordAdapter) {
     wsServer.onInstanceDisconnect((instanceId) => {
       console.log(`[Discord] Instance ${instanceId} disconnected, sending disconnect notification...`)
-      adapter.sendDisconnectNotification(instanceId).catch(console.error)
+      const workspace = instanceWorkspaces.get(instanceId)
+      adapter.sendDisconnectNotification(instanceId, workspace).catch(console.error)
     })
   }
 

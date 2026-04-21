@@ -144,179 +144,255 @@ export class DiscordAdapter implements IMAdapter {
   }
 
   /**
-   * 获取或创建 Instance 对应的 Thread
-   * 通过 Guild API 查询活跃线程，按名称匹配
+   * 获取或创建 Instance 对应的 Thread。
+   *
+   * 查找顺序：
+   *   1. 内存映射（同进程会话内复用，含活跃/归档两种情况）
+   *   2. Guild 活跃线程 API（/guilds/{id}/threads/active）
+   *   3. Channel 归档线程 API（/channels/{id}/threads/archived/public）
+   *   4. 以上均无匹配 → 创建新 thread
+   *
+   * 找到已有 thread 时，根据 connectReason 发送对应通知消息：
+   *   - 'connect'   → 发送 "Instance Connected" 消息（hub 启动/重启后 instance 连接）
+   *   - 'reconnect' → 发送 "Instance Reconnected" 消息（instance 掉线后重新上线）
+   *   - undefined   → 不发送状态消息（静默获取，用于普通消息发送）
    */
-  async getOrCreateThread(instanceId: string, instanceName: string): Promise<string> {
+  async getOrCreateThread(
+    instanceId: string,
+    instanceName: string,
+    connectReason?: 'connect' | 'reconnect'
+  ): Promise<string> {
     const threadName = instanceName.split('/').pop() || instanceId
 
-    // 1. 检查内存中是否已有映射（同一会话内复用）
+    // ── 1. 内存映射命中 ──────────────────────────────────────────────────────
     const existing = this.instanceThreads.get(instanceId)
     if (existing) {
-      console.log(`[Discord] Found existing mapping for ${instanceId}: thread ${existing.threadId}`)
-      
-      // 尝试访问 thread
+      console.log(`[Discord] Found in-memory mapping for ${instanceId}: thread ${existing.threadId}`)
       const thread = await this.getThread(existing.threadId)
-      if (thread && !thread.thread_metadata?.archived) {
-        // Thread 活跃，直接复用
+      if (thread) {
+        if (thread.thread_metadata?.archived) {
+          console.log(`[Discord] In-memory thread ${existing.threadId} is archived, unarchiving...`)
+          await this.unarchiveThread(existing.threadId)
+        }
         existing.lastActivity = Date.now()
-        console.log(`[Discord] Reusing active thread for ${instanceId}: ${existing.threadId}`)
+        if (connectReason) {
+          await this.sendStatusMessage(existing.threadId, instanceId, instanceName, connectReason)
+        }
         return existing.threadId
       }
+      // Thread 不可访问，清除旧映射，继续向下查找
+      console.log(`[Discord] In-memory thread ${existing.threadId} no longer accessible, searching...`)
+      this.chatIdToThread.delete(existing.numberChatId)
+      this.instanceThreads.delete(instanceId)
     }
 
-    // 2. 通过 Guild API 查询活跃线程
+    // ── 2. Guild 活跃线程 ────────────────────────────────────────────────────
     if (this.guildId) {
-      const threadInfo = await this.findThreadByName(threadName)
-      if (threadInfo) {
-        const { threadId, isArchived } = threadInfo
-        console.log(`[Discord] Found existing thread by name "${threadName}": ${threadId} (archived: ${isArchived})`)
-        
-        // 如果 Thread 已归档，尝试取消归档
-        if (isArchived) {
-          console.log(`[Discord] Thread ${threadId} is archived, attempting to unarchive...`)
-          try {
-            await this.fetchWithAuth(`/channels/${threadId}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ archived: false })
-            })
-            console.log(`[Discord] ✓ Successfully unarchived thread: ${threadId}`)
-          } catch (unarchiveError) {
-            console.warn(`[Discord] Failed to unarchive thread ${threadId}:`, unarchiveError)
-            // 继续尝试使用，可能无法发送消息
-          }
+      const activeThread = await this.findActiveThreadByName(threadName)
+      if (activeThread) {
+        console.log(`[Discord] Found active thread by name "${threadName}": ${activeThread}`)
+        const threadId = await this.registerExistingThread(instanceId, activeThread)
+        if (connectReason) {
+          await this.sendStatusMessage(threadId, instanceId, instanceName, connectReason)
         }
-        
-        // 创建映射
-        this.chatIdCounter++
-        const numberChatId = this.chatIdCounter
-        const mapping: ThreadMapping = {
-          instanceId,
-          threadId: threadId,
-          channelId: this.channelId,
-          lastActivity: Date.now(),
-          numberChatId
+        return threadId
+      }
+
+      // ── 3. Channel 归档线程 ────────────────────────────────────────────────
+      const archivedThread = await this.findArchivedThreadByName(threadName)
+      if (archivedThread) {
+        console.log(`[Discord] Found archived thread by name "${threadName}": ${archivedThread}, unarchiving...`)
+        await this.unarchiveThread(archivedThread)
+        const threadId = await this.registerExistingThread(instanceId, archivedThread)
+        if (connectReason) {
+          await this.sendStatusMessage(threadId, instanceId, instanceName, connectReason)
         }
-        this.instanceThreads.set(instanceId, mapping)
-        this.chatIdToThread.set(numberChatId, threadId)
-        
-        // 重新加入 thread
-        try {
-          await this.fetchWithAuth(`/channels/${threadId}/thread-members/@me`, {
-            method: 'PUT'
-          })
-          console.log(`[Discord] Re-joined thread ${threadId}`)
-        } catch (joinError) {
-          console.warn(`[Discord] Failed to join thread:`, joinError)
-        }
-        
-        // 发送重新连接通知
-        try {
-          const msgResponse = await this.fetchWithAuth<{id: string}>(`/channels/${threadId}/messages`, {
-            method: 'POST',
-            body: JSON.stringify({
-              content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
-            })
-          })
-          console.log(`[Discord] ✓ Sent reconnection message to thread ${threadId}, msgId: ${msgResponse.id}`)
-        } catch (msgError) {
-          console.error(`[Discord] ✗ Failed to send reconnection message:`, msgError)
-        }
-        
         return threadId
       }
     }
 
-    // 3. 创建新的 thread
+    // ── 4. 创建新 thread ────────────────────────────────────────────────────
     console.log(`[Discord] No existing thread found for "${threadName}", creating new one`)
-    return this.createThread(instanceId, instanceName)
+    const newThreadId = await this.createThread(instanceId, instanceName)
+    // 向新 thread 内发送 connected 消息（createThread 只在 channel 发了锚点）
+    if (connectReason) {
+      await this.sendStatusMessage(newThreadId, instanceId, instanceName, connectReason)
+    } else {
+      // 无论如何，新建 thread 时总要发 connected 消息
+      await this.sendStatusMessage(newThreadId, instanceId, instanceName, 'connect')
+    }
+    return newThreadId
   }
 
   /**
-   * 通过 Guild API 按名称查找 Thread
-   * 返回 threadId 和是否已归档
-   * 会验证 Thread 是否真的可用（包括权限检查）
+   * 在活跃线程列表（/guilds/{guildId}/threads/active）中按名称查找
    */
-  private async findThreadByName(threadName: string): Promise<{ threadId: string; isArchived: boolean } | undefined> {
-    if (!this.guildId) {
-      console.warn(`[Discord] No guildId available, cannot query threads`)
-      return undefined
-    }
-
+  private async findActiveThreadByName(threadName: string): Promise<string | undefined> {
     try {
-      console.log(`[Discord] Querying active threads from guild ${this.guildId}...`)
-      
-      // 获取所有活跃线程
-      const response = await this.fetchWithAuth<{
-        threads: DiscordThread[]
-        members: any[]
-      }>(`/guilds/${this.guildId}/threads/active`)
-      
-      console.log(`[Discord] Found ${response.threads?.length || 0} active threads in guild`)
-      
-      // 查找匹配的 thread
+      console.log(`[Discord] Searching active threads in guild ${this.guildId} for "${threadName}"...`)
+      const response = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
+        `/guilds/${this.guildId}/threads/active`
+      )
       for (const thread of response.threads || []) {
-        // 只找属于当前频道的 thread
         if (thread.parent_id === this.channelId && thread.name === threadName) {
-          console.log(`[Discord] Found potential match: ${thread.id} (name: "${thread.name}"), verifying accessibility...`)
-          
-          // 验证1: Thread 是否存在
-          const verifiedThread = await this.getThread(thread.id)
-          if (!verifiedThread) {
-            console.log(`[Discord] Thread ${thread.id} found in list but getThread failed, skipping`)
-            continue
+          // 验证可访问性
+          if (await this.verifyThreadAccess(thread.id)) {
+            return thread.id
           }
-          
-          // 验证2: Bot 是否有权限访问（尝试加入 Thread）
-          try {
-            await this.fetchWithAuth(`/channels/${thread.id}/thread-members/@me`, {
-              method: 'PUT'
-            })
-            console.log(`[Discord] ✓ Successfully joined thread ${thread.id}`)
-          } catch (joinError) {
-            console.log(`[Discord] Thread ${thread.id} exists but cannot join (no permission), skipping`)
-            continue
-          }
-          
-          // 验证3: 尝试读取消息（确认有读取权限）
-          try {
-            await this.fetchWithAuth(`/channels/${thread.id}/messages?limit=1`)
-            console.log(`[Discord] ✓ Can read messages from thread ${thread.id}`)
-          } catch (readError) {
-            console.log(`[Discord] Thread ${thread.id} joined but cannot read messages (no permission), skipping`)
-            continue
-          }
-          
-          const isArchived = verifiedThread.thread_metadata?.archived || false
-          console.log(`[Discord] ✓ Fully verified accessible thread: ${thread.id} (archived: ${isArchived})`)
-          return { threadId: thread.id, isArchived }
         }
       }
-      
-      console.log(`[Discord] ✗ No accessible thread found with name "${threadName}" in channel ${this.channelId}`)
     } catch (error) {
-      console.error(`[Discord] Failed to query guild threads:`, error)
+      console.error(`[Discord] Failed to query active threads:`, error)
     }
-    
     return undefined
   }
 
   /**
+   * 在归档线程列表（/channels/{channelId}/threads/archived/public）中按名称查找
+   * 支持分页，最多查询前 100 条
+   */
+  private async findArchivedThreadByName(threadName: string): Promise<string | undefined> {
+    try {
+      console.log(`[Discord] Searching archived threads in channel ${this.channelId} for "${threadName}"...`)
+      const response = await this.fetchWithAuth<{ threads: DiscordThread[]; has_more: boolean }>(
+        `/channels/${this.channelId}/threads/archived/public?limit=100`
+      )
+      for (const thread of response.threads || []) {
+        if (thread.name === threadName) {
+          console.log(`[Discord] Found archived thread: ${thread.id} (name: "${thread.name}")`)
+          return thread.id
+        }
+      }
+    } catch (error) {
+      console.error(`[Discord] Failed to query archived threads:`, error)
+    }
+    return undefined
+  }
+
+  /**
+   * 将已有 threadId 注册为 instanceId 的内存映射，并加入 thread。
+   * 同时拉取当前最新消息 ID 作为 lastMessageId 的初始值，
+   * 防止 hub 重启后重新处理历史消息。
+   */
+  private async registerExistingThread(instanceId: string, threadId: string): Promise<string> {
+    this.chatIdCounter++
+    const numberChatId = this.chatIdCounter
+
+    // 加入 thread（确保 bot 可以收发消息）
+    try {
+      await this.fetchWithAuth(`/channels/${threadId}/thread-members/@me`, { method: 'PUT' })
+      console.log(`[Discord] Bot joined thread ${threadId}`)
+    } catch (joinError) {
+      console.warn(`[Discord] Failed to join thread ${threadId}:`, joinError)
+    }
+
+    // 拉取当前最新消息 ID，作为轮询起点，避免重放历史消息
+    const lastMessageId = await this.fetchLatestMessageId(threadId)
+    if (lastMessageId) {
+      console.log(`[Discord] Initialized lastMessageId for thread ${threadId}: ${lastMessageId}`)
+    }
+
+    const mapping: ThreadMapping = {
+      instanceId,
+      threadId,
+      channelId: this.channelId,
+      lastActivity: Date.now(),
+      numberChatId,
+      lastMessageId
+    }
+    this.instanceThreads.set(instanceId, mapping)
+    this.chatIdToThread.set(numberChatId, threadId)
+
+    return threadId
+  }
+
+  /**
+   * 获取指定 thread 中当前最新的消息 ID（limit=1）
+   * 返回 undefined 表示 thread 为空或请求失败
+   */
+  private async fetchLatestMessageId(threadId: string): Promise<string | undefined> {
+    try {
+      const messages = await this.fetchWithAuth<DiscordMessage[]>(
+        `/channels/${threadId}/messages?limit=1`
+      )
+      if (messages.length > 0) {
+        return messages[0].id
+      }
+    } catch (error) {
+      console.warn(`[Discord] Failed to fetch latest message for thread ${threadId}:`, error)
+    }
+    return undefined
+  }
+
+  /**
+   * 取消归档 thread
+   */
+  private async unarchiveThread(threadId: string): Promise<void> {
+    try {
+      await this.fetchWithAuth(`/channels/${threadId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: false })
+      })
+      console.log(`[Discord] ✓ Unarchived thread ${threadId}`)
+    } catch (error) {
+      console.warn(`[Discord] Failed to unarchive thread ${threadId}:`, error)
+    }
+  }
+
+  /**
+   * 验证 bot 是否能访问（加入并读取消息）指定 thread
+   */
+  private async verifyThreadAccess(threadId: string): Promise<boolean> {
+    try {
+      await this.fetchWithAuth(`/channels/${threadId}/thread-members/@me`, { method: 'PUT' })
+      await this.fetchWithAuth(`/channels/${threadId}/messages?limit=1`)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 向 thread 发送状态消息（connected / reconnected）
+   */
+  private async sendStatusMessage(
+    threadId: string,
+    instanceId: string,
+    instanceName: string,
+    reason: 'connect' | 'reconnect'
+  ): Promise<void> {
+    const emoji = reason === 'connect' ? '🟢' : '🔄'
+    const label = reason === 'connect' ? 'Instance Connected' : 'Instance Reconnected'
+    const content = [
+      `${emoji} **${label}**`,
+      `📁 **Workspace**: \`${instanceName}\``,
+      `🆔 **Instance ID**: \`${instanceId}\``,
+      `⏰ ${new Date().toLocaleString()}`
+    ].join('\n')
+
+    try {
+      await this.fetchWithAuth<{ id: string }>(`/channels/${threadId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content })
+      })
+      console.log(`[Discord] ✓ Sent "${label}" message to thread ${threadId}`)
+    } catch (error) {
+      console.error(`[Discord] ✗ Failed to send status message to thread ${threadId}:`, error)
+    }
+  }
+
+  /**
    * 创建 Thread
+   * starter message 只作为 thread 锚点，connected 消息由 getOrCreateThread 通过 sendStatusMessage 发送
    */
   private async createThread(instanceId: string, instanceName: string): Promise<string> {
     console.log(`[Discord] Creating thread for ${instanceId} in channel ${this.channelId}`)
-    
-    // 先发送一条消息作为 thread 的 starter
+    const threadName = instanceName.split('/').pop() || instanceId
+
+    // 先发送一条消息作为 thread 的 starter（channel 内可见的锚点）
     console.log(`[Discord] Step 1: Sending starter message...`)
     const starterMessage = await this.sendChannelMessage({
-      content: `🤖 **Instance Connected**\n📁 **Workspace**: \`${instanceName}\`\n⏰ **Time**: ${new Date().toLocaleString()}`,
-      embeds: [{
-        title: '🚀 OpenCode Instance',
-        description: `**ID**: \`${instanceId}\`\n**Status**: 🟢 Active`,
-        color: 0x00ff00,
-        timestamp: new Date().toISOString()
-      }]
+      content: `📌 **OpenCode Instance Thread**\n📁 \`${instanceName}\`\n🆔 \`${instanceId}\``
     })
     console.log(`[Discord] Step 1 complete: Starter message sent (ID: ${starterMessage.id})`)
 
@@ -327,9 +403,9 @@ export class DiscordAdapter implements IMAdapter {
       {
         method: 'POST',
         body: JSON.stringify({
-          name: instanceName.split('/').pop() || instanceId,
+          name: threadName,
           auto_archive_duration: 10080, // 7天
-          type: 11 // PUBLIC_THREAD
+          // Note: type is ignored for message-based threads; Discord infers PUBLIC_THREAD automatically
         })
       }
     )
@@ -381,16 +457,26 @@ export class DiscordAdapter implements IMAdapter {
   /**
    * 发送断开连接通知（不归档，依赖 Discord 7 天自动归档）
    */
-  async sendDisconnectNotification(instanceId: string): Promise<void> {
+  async sendDisconnectNotification(instanceId: string, instanceName?: string): Promise<void> {
     const mapping = this.instanceThreads.get(instanceId)
-    if (!mapping) return
+    if (!mapping) {
+      console.warn(`[Discord] No thread mapping for ${instanceId}, skipping disconnect notification`)
+      return
+    }
+
+    const workspaceInfo = instanceName ? `\n📁 **Workspace**: \`${instanceName}\`` : ''
+    const content = [
+      `🔴 **Instance Disconnected**`,
+      `🆔 **Instance ID**: \`${instanceId}\`${workspaceInfo}`,
+      `⏰ ${new Date().toLocaleString()}`,
+      ``,
+      `_Thread will auto-archive after 7 days of inactivity_`
+    ].join('\n')
 
     try {
       await this.fetchWithAuth(`/channels/${mapping.threadId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({
-          content: `🔴 **Instance Disconnected**\n⏰ ${new Date().toLocaleString()}\n\n_Thread will auto-archive after 7 days of inactivity_`
-        })
+        body: JSON.stringify({ content })
       })
       console.log(`[Discord] Sent disconnect notification for instance ${instanceId}`)
     } catch (error) {
