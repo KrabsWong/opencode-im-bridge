@@ -261,6 +261,7 @@ export class DiscordAdapter implements IMAdapter {
 
   /**
    * 发送消息（IMAdapter 接口实现）
+   * Discord 限制: 内容最多 2000 字符
    */
   async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     // 通过 chatId 查找真正的 threadId
@@ -268,30 +269,88 @@ export class DiscordAdapter implements IMAdapter {
     if (!threadId) {
       throw new Error(`Unknown chatId: ${message.chatId}. Thread may not exist.`)
     }
-    console.log(`[Discord] Sending message to thread ${threadId} (chatId: ${message.chatId})`)
+    console.log(`[Discord] Sending message to thread ${threadId} (chatId: ${message.chatId}, length: ${message.text.length})`)
 
-    const payload: {
-      content: string
-      embeds?: DiscordEmbed[]
-      components?: DiscordComponent[]
-    } = {
-      content: message.text
-    }
+    // Discord 内容限制 2000 字符，留 50 字符余量
+    const MAX_LENGTH = 1950
+    let lastMessageId = ''
 
-    // 转换 replyMarkup 为 Discord components
-    if (message.replyMarkup) {
-      payload.components = this.convertKeyboardToComponents(message.replyMarkup)
-    }
+    // 分割长消息
+    const chunks = this.splitMessage(message.text, MAX_LENGTH)
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const isLastChunk = i === chunks.length - 1
 
-    const response = await this.fetchWithAuth<{ id: string }>(
-      `/channels/${threadId}/messages`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload)
+      const payload: {
+        content: string
+        embeds?: DiscordEmbed[]
+        components?: DiscordComponent[]
+      } = {
+        content: chunk
       }
-    )
 
-    return { messageId: response.id }
+      // 只在最后一条消息添加按钮
+      if (isLastChunk && message.replyMarkup) {
+        payload.components = this.convertKeyboardToComponents(message.replyMarkup)
+      }
+
+      const response = await this.fetchWithAuth<{ id: string }>(
+        `/channels/${threadId}/messages`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        }
+      )
+
+      lastMessageId = response.id
+    }
+
+    return { messageId: lastMessageId }
+  }
+
+  /**
+   * 分割长消息（按行分割，尽量保持完整性）
+   */
+  private splitMessage(text: string, maxLength: number): string[] {
+    if (text.length <= maxLength) {
+      return [text]
+    }
+
+    const chunks: string[] = []
+    const lines = text.split('\n')
+    let currentChunk = ''
+
+    for (const line of lines) {
+      // 如果单行就超过限制，强制分割
+      if (line.length > maxLength) {
+        if (currentChunk) {
+          chunks.push(currentChunk)
+          currentChunk = ''
+        }
+        
+        // 按字符分割长行
+        for (let i = 0; i < line.length; i += maxLength) {
+          chunks.push(line.slice(i, i + maxLength))
+        }
+        continue
+      }
+
+      // 检查添加此行后是否超过限制
+      const newChunk = currentChunk ? currentChunk + '\n' + line : line
+      if (newChunk.length > maxLength) {
+        chunks.push(currentChunk)
+        currentChunk = line
+      } else {
+        currentChunk = newChunk
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk)
+    }
+
+    return chunks
   }
 
   /**
