@@ -634,6 +634,25 @@ export class DiscordAdapter implements IMAdapter {
   }
 
   /**
+   * 删除消息
+   */
+  async deleteMessage(chatId: number, messageId: string): Promise<void> {
+    const threadId = this.chatIdToThread.get(chatId)
+    if (!threadId) {
+      console.error(`[Discord] Cannot delete message: unknown chatId ${chatId}`)
+      return
+    }
+
+    try {
+      await this.fetchWithAuth(`/channels/${threadId}/messages/${messageId}`, {
+        method: 'DELETE'
+      })
+    } catch (err) {
+      console.warn(`[Discord] Failed to delete message:`, err)
+    }
+  }
+
+  /**
    * 转换 IMKeyboard 为 Discord Components
    */
   private convertKeyboardToComponents(keyboard: IMKeyboard): DiscordComponent[] {

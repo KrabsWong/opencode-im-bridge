@@ -98,6 +98,10 @@ export class TelegramAdapter implements IMAdapter {
       body.reply_markup = this.convertKeyboard(message.replyMarkup)
     }
 
+    if (message.replyToMessageId) {
+      body.reply_to_message_id = parseInt(message.replyToMessageId)
+    }
+
     const response = await this.fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -164,6 +168,27 @@ export class TelegramAdapter implements IMAdapter {
     if (!response.ok) {
       const error = await response.text()
       throw new Error(`Telegram API error: ${error}`)
+    }
+  }
+
+  /**
+   * Delete a message
+   */
+  async deleteMessage(chatId: number, messageId: string): Promise<void> {
+    const url = `${this.baseUrl}/deleteMessage`
+
+    const response = await this.fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: parseInt(messageId)
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      console.warn(`[Telegram] Failed to delete message: ${error}`)
     }
   }
 

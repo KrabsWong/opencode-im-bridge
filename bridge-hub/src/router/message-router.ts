@@ -39,8 +39,16 @@ export class MessageRouter {
   private userChatMap: Map<string, number> = new Map() // userId -> chatId
   private userRecentCombos: Map<string, RecentCombo[]> = new Map() // userId -> combos
   private goMessageContexts: Map<string, GoMessageContext> = new Map() // userId -> context
-  private lastResponseHashes: Map<string, string> = new Map() // sessionId -> hash
   private readonly MAX_RECENT_COMBOS = 5
+
+  // Session 最后响应消息记录（用于重复检测关联）
+  private sessionLastMessages: Map<string, {
+    messageId: string
+    chatId: number
+    hash: string
+    duplicateCount: number  // 连续重复次数
+    timestamp: number
+  }> = new Map()
 
   constructor(
     registry: InstanceRegistry,
@@ -90,18 +98,49 @@ export class MessageRouter {
     return hash.toString(16)
   }
 
-  // 检查是否为重复响应
-  private isDuplicateResponse(sessionId: string, responseText: string): boolean {
+  // 检查是否为重复响应（返回详细信息）
+  private checkDuplicateResponse(sessionId: string, responseText: string): {
+    isDuplicate: boolean
+    hash: string
+    lastMessage?: { messageId: string; chatId: number; duplicateCount: number }
+    duplicateCount: number
+  } {
     const hash = this.hashText(responseText)
-    const lastHash = this.lastResponseHashes.get(sessionId)
+    const lastMessage = this.sessionLastMessages.get(sessionId)
 
-    if (lastHash === hash) {
-      console.log(`[MessageRouter] Duplicate response detected for session ${sessionId}, skipping`)
-      return true
+    if (lastMessage && lastMessage.hash === hash) {
+      // 更新重复计数
+      lastMessage.duplicateCount++
+      console.log(`[MessageRouter] Duplicate response #${lastMessage.duplicateCount} detected for session ${sessionId}`)
+
+      return {
+        isDuplicate: true,
+        hash,
+        lastMessage: {
+          messageId: lastMessage.messageId,
+          chatId: lastMessage.chatId,
+          duplicateCount: lastMessage.duplicateCount
+        },
+        duplicateCount: lastMessage.duplicateCount
+      }
     }
 
-    this.lastResponseHashes.set(sessionId, hash)
-    return false
+    return {
+      isDuplicate: false,
+      hash,
+      duplicateCount: 0
+    }
+  }
+
+  // 记录 session 消息（用于重复检测关联）
+  private recordSessionMessage(sessionId: string, messageId: string, chatId: number, hash: string): void {
+    this.sessionLastMessages.set(sessionId, {
+      messageId,
+      chatId,
+      hash,
+      duplicateCount: 0,
+      timestamp: Date.now()
+    })
   }
 
   // 记录最近使用的组合
@@ -304,12 +343,12 @@ export class MessageRouter {
 
       case 'reply':
         // 问题回复，转发到对应实例
-        await this.handleQuestionReply(callback.user.id, parts[1], parts[2])
+        await this.handleQuestionReply(callback.user.id, parts[1], parts[2], callback.chatId)
         break
 
       case 'permission':
         // 权限回复，转发到对应实例
-        await this.handlePermissionReply(callback.user.id, parts[1], parts[2] as 'once' | 'always' | 'reject')
+        await this.handlePermissionReply(callback.user.id, parts[1], parts[2] as 'once' | 'always' | 'reject', callback.chatId)
         break
 
       case 'select_combo':
@@ -901,18 +940,26 @@ export class MessageRouter {
       const responseText = response.text || '无响应内容'
 
       // 检查是否为重复响应
-      if (this.isDuplicateResponse(sessionId, responseText)) {
-        await this.sendMarkdownWithEntities(
+      const duplicateCheck = this.checkDuplicateResponse(sessionId, responseText)
+      if (duplicateCheck.isDuplicate) {
+        // 检测到重复，删除当前"正在处理"消息，改为发送简洁的重复提示
+        // 新消息引用原消息，方便用户点击查看
+        const repeatNotice = `🔁 **重复响应 #${duplicateCheck.duplicateCount}**\n` +
+          `与上条消息内容相同，已跳过`
+
+        // 先删除"正在处理"消息，然后发送新的提示消息（引用原消息）
+        await this.deleteMessage(chatId, processingMsg.messageId)
+        await this.sendMessage({
           chatId,
-          infoSection,
-          '🦀 **蟹老板说：**',
-          '*[重复响应，已跳过]*',
-          { editMessageId: processingMsg.messageId }
-        )
+          text: repeatNotice,
+          parseMode: 'Markdown',
+          // 使用 replyTo 引用原消息（如果适配器支持）
+          replyToMessageId: duplicateCheck.lastMessage?.messageId
+        })
         return
       }
 
-      // 使用统一方法发送响应
+      // 发送新响应并记录消息信息
       await this.sendMarkdownWithEntities(
         chatId,
         infoSection,
@@ -920,6 +967,9 @@ export class MessageRouter {
         responseText,
         { editMessageId: processingMsg.messageId }
       )
+
+      // 记录这条消息用于后续的重复检测
+      this.recordSessionMessage(sessionId, processingMsg.messageId, chatId, duplicateCheck.hash)
     } catch (err) {
       // 从 pending 中移除
       this.pendingMessages.delete(processingMsg.messageId)
@@ -950,19 +1000,31 @@ export class MessageRouter {
   }
 
   // 处理问题回复
-  private async handleQuestionReply(userId: string, requestId: string, value: string): Promise<void> {
-    const instance = this.registry.getUserInstance(userId)
+  private async handleQuestionReply(userId: string, requestId: string, value: string, chatId?: number): Promise<void> {
+    // 获取 pending question 信息（优先使用，包含 instanceId）
+    const pendingQuestion = this.pendingMessages.get(requestId)
 
-    if (!instance) {
-      console.error('No instance selected for user:', userId)
+    let instanceId: string | undefined
+
+    if (pendingQuestion) {
+      // 从 pending 信息中直接获取 instanceId（适用于 Discord 模式）
+      instanceId = pendingQuestion.instanceId
+      console.log(`[MessageRouter] Found instance ${instanceId} from pending question for request ${requestId}`)
+    } else {
+      // 回退到用户级别查找（Telegram 模式）
+      const instance = this.registry.getUserInstance(userId)
+      if (instance) {
+        instanceId = instance.id
+      }
+    }
+
+    if (!instanceId) {
+      console.error('[MessageRouter] No instance found for question reply. userId:', userId, 'chatId:', chatId)
       return
     }
 
-    // 获取 pending question 信息
-    const pendingQuestion = this.pendingMessages.get(requestId)
-
     try {
-      await this.registry.sendToInstance(instance.id, {
+      await this.registry.sendToInstance(instanceId, {
         type: 'question_reply',
         requestId,
         value
@@ -990,19 +1052,31 @@ export class MessageRouter {
   }
 
   // 处理权限回复
-  private async handlePermissionReply(userId: string, requestId: string, value: 'once' | 'always' | 'reject'): Promise<void> {
-    const instance = this.registry.getUserInstance(userId)
+  private async handlePermissionReply(userId: string, requestId: string, value: 'once' | 'always' | 'reject', chatId?: number): Promise<void> {
+    // 获取 pending permission 信息（优先使用，包含 instanceId）
+    const pendingPermission = this.pendingPermissions.get(requestId)
 
-    if (!instance) {
-      console.error('No instance selected for user:', userId)
+    let instanceId: string | undefined
+
+    if (pendingPermission) {
+      // 从 pending 信息中直接获取 instanceId（适用于 Discord 模式）
+      instanceId = pendingPermission.instanceId
+      console.log(`[MessageRouter] Found instance ${instanceId} from pending permission for request ${requestId}`)
+    } else {
+      // 回退到用户级别查找（Telegram 模式）
+      const instance = this.registry.getUserInstance(userId)
+      if (instance) {
+        instanceId = instance.id
+      }
+    }
+
+    if (!instanceId) {
+      console.error('[MessageRouter] No instance found for permission reply. userId:', userId, 'chatId:', chatId)
       return
     }
 
-    // 获取 pending permission 信息
-    const pendingPermission = this.pendingPermissions.get(requestId)
-
     try {
-      await this.registry.sendToInstance(instance.id, {
+      await this.registry.sendToInstance(instanceId, {
         type: 'permission_reply',
         requestId,
         value
@@ -1464,6 +1538,17 @@ export class MessageRouter {
   // 发送消息的辅助方法
   private async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     return this.adapter.sendMessage(message)
+  }
+
+  // 删除消息的辅助方法
+  private async deleteMessage(chatId: number, messageId: string): Promise<void> {
+    if (this.adapter.deleteMessage) {
+      try {
+        await this.adapter.deleteMessage(chatId, messageId)
+      } catch (err) {
+        console.error(`[MessageRouter] Failed to delete message ${messageId}:`, err)
+      }
+    }
   }
 
   /**

@@ -95,6 +95,7 @@ export interface IMOutgoingMessage {
   parseMode?: 'HTML' | 'Markdown' | 'MarkdownV2' | 'entities'
   entities?: TelegramEntity[]
   replyMarkup?: IMKeyboard
+  replyToMessageId?: string  // 引用/回复的消息 ID
 }
 
 export interface IMKeyboardButton {
@@ -129,7 +130,12 @@ export interface IMAdapter {
    * Edit an existing message
    */
   editMessage?(messageId: string, message: Partial<IMOutgoingMessage>): Promise<void>
-  
+
+  /**
+   * Delete a message
+   */
+  deleteMessage?(chatId: number, messageId: string): Promise<void>
+
   /**
    * Set up message handler for incoming messages
    */

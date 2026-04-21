@@ -139,13 +139,46 @@ Instance registered: project-a-abc123 (/Users/you/project-a)
 
 ### Bridge Hub 环境变量
 
+#### 基础配置
+
 | 环境变量 | 说明 | 默认值 |
 |----------|------|--------|
 | `PORT` | WebSocket 端口 | 38471 |
-| `AUTH_TOKEN` | 认证令牌（可选） | 自动生成 |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token (必填) | - |
-| `ADMIN_USERS` | 允许的用户 ID 列表（逗号分隔） | 所有用户 |
-| `ALLOWED_CHATS` | 允许的 Chat ID 列表（逗号分隔） | 所有 Chat |
+| `AUTH_TOKEN` | 认证令牌（可选，未设置则自动生成） | - |
+| `ADAPTERS` | 启用的适配器列表（逗号分隔） | 根据配置自动推断 |
+
+#### 适配器选择
+
+使用 `ADAPTERS` 环境变量显式启用适配器：
+
+```bash
+# 只启用 Telegram
+ADAPTERS=telegram
+
+# 只启用 Discord
+ADAPTERS=discord
+
+# 同时启用多个（未来扩展）
+ADAPTERS=telegram,discord
+```
+
+如果不设置 `ADAPTERS`，系统会根据具体配置自动推断（向后兼容）。
+
+#### Telegram 配置
+
+| 环境变量 | 说明 | 必填 |
+|----------|------|------|
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（从 @BotFather 获取） | 是 |
+| `TELEGRAM_ADMIN_USERS` | 允许的用户 ID 列表（逗号分隔） | 否 |
+| `TELEGRAM_ALLOWED_CHATS` | 允许的 Chat ID 列表（逗号分隔） | 否 |
+
+#### Discord 配置
+
+| 环境变量 | 说明 | 必填 |
+|----------|------|------|
+| `DISCORD_BOT_TOKEN` | Discord Bot Token | 是 |
+| `DISCORD_CHANNEL_ID` | 默认频道 ID（用于创建线程） | 是 |
+| `DISCORD_ADMIN_USERS` | 允许的用户 ID 列表（逗号分隔） | 否 |
 
 ### Plugin 配置
 
