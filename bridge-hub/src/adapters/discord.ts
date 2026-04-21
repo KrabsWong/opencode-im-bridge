@@ -107,6 +107,7 @@ export class DiscordAdapter implements IMAdapter {
   private chatIdToThread: Map<number, string> = new Map() // number chatId -> threadId string
   private pollInterval: NodeJS.Timeout | null = null
   private lastMessageId: string | null = null
+  private chatIdCounter: number = 1000 // 递增计数器，保证 chatId 唯一
 
   constructor() {
     this.botToken = ''
@@ -191,9 +192,10 @@ export class DiscordAdapter implements IMAdapter {
       console.warn(`[Discord] Warning: Failed to join thread, but continuing:`, joinError)
     }
 
-    // 生成 number chatId（使用 BigInt 避免精度丢失）
-    const numberChatId = Number(BigInt(thread.id) % BigInt(Number.MAX_SAFE_INTEGER))
-    console.log(`[Discord] Thread ID: ${thread.id} -> Chat ID: ${numberChatId}`)
+    // 生成唯一的 number chatId（使用递增计数器避免冲突）
+    this.chatIdCounter++
+    const numberChatId = this.chatIdCounter
+    console.log(`[Discord] Thread ID: ${thread.id} -> Chat ID: ${numberChatId} (instance: ${instanceId})`)
 
     // 保存映射关系
     const mapping: ThreadMapping = {
@@ -569,9 +571,15 @@ export class DiscordAdapter implements IMAdapter {
             raw: msg
           }
 
+          console.log(`[Discord] Message from thread ${mapping.threadId} (instance: ${instanceId}, chatId: ${mapping.numberChatId}): ${msg.content.substring(0, 50)}`)
+
           // 通知处理器
           for (const handler of this.messageHandlers) {
-            handler(imMessage)
+            try {
+              handler(imMessage)
+            } catch (err) {
+              console.error(`[Discord] Error in message handler:`, err)
+            }
           }
         }
       } catch (error) {
@@ -591,28 +599,34 @@ export class DiscordAdapter implements IMAdapter {
   async handleInteraction(interaction: DiscordInteraction): Promise<void> {
     if (interaction.type !== 3) return // 不是组件交互
 
-    // 立即发送 ACK 响应（Discord 要求 3 秒内响应）
-    try {
-      await this.fetchWithAuth(`/interactions/${interaction.id}/${interaction.token}/callback`, {
-        method: 'POST',
-        body: JSON.stringify({
-          type: 6 // ACK 响应，不显示加载状态
-        })
-      })
-      console.log(`[Discord] Interaction ACK sent: ${interaction.id}`)
-    } catch (ackError) {
-      console.warn(`[Discord] Failed to ACK interaction:`, ackError)
-    }
+    console.log(`[Discord] Received interaction: ${interaction.id}, type: ${interaction.type}, custom_id: ${interaction.data?.custom_id}`)
 
+    // 立即发送 ACK 响应（Discord 要求 3 秒内响应）- 不等待结果
+    const ackPromise = this.fetchWithAuth(`/interactions/${interaction.id}/${interaction.token}/callback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 6 // ACK 响应，不显示加载状态
+      })
+    }).then(() => {
+      console.log(`[Discord] Interaction ACK sent: ${interaction.id}`)
+    }).catch((ackError) => {
+      console.warn(`[Discord] Failed to ACK interaction:`, ackError)
+    })
+
+    // 不等待 ACK，立即处理回调
     // 通过 threadId 查找对应的 numberChatId
     const threadId = interaction.message?.channel_id
     let chatId = 0
-    for (const [_, mapping] of this.instanceThreads) {
+    let foundInstanceId = ''
+    for (const [instanceId, mapping] of this.instanceThreads) {
       if (mapping.threadId === threadId) {
         chatId = mapping.numberChatId
+        foundInstanceId = instanceId
         break
       }
     }
+
+    console.log(`[Discord] Interaction from thread ${threadId} -> chatId ${chatId}, instance: ${foundInstanceId || 'not found'}`)
 
     const callback: IMCallbackQuery = {
       id: interaction.id,
@@ -627,8 +641,15 @@ export class DiscordAdapter implements IMAdapter {
     }
 
     for (const handler of this.callbackHandlers) {
-      handler(callback)
+      try {
+        handler(callback)
+      } catch (err) {
+        console.error(`[Discord] Error in callback handler:`, err)
+      }
     }
+
+    // 等待 ACK 完成（用于日志记录，但不阻塞回调处理）
+    await ackPromise.catch(() => {})
   }
 
   /**
@@ -642,11 +663,15 @@ export class DiscordAdapter implements IMAdapter {
    * 通过 chatId 查找 Instance ID（用于 Thread 自动路由）
    */
   getInstanceIdByChatId(chatId: number): string | undefined {
+    console.log(`[Discord] Looking up instance for chatId ${chatId}, tracked threads: ${this.instanceThreads.size}`)
     for (const [instanceId, mapping] of this.instanceThreads) {
+      console.log(`[Discord]   Checking: instance=${instanceId}, chatId=${mapping.numberChatId}, threadId=${mapping.threadId}`)
       if (mapping.numberChatId === chatId) {
+        console.log(`[Discord]   Found match: ${instanceId}`)
         return instanceId
       }
     }
+    console.log(`[Discord]   No match found for chatId ${chatId}`)
     return undefined
   }
 

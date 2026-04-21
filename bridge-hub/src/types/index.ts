@@ -16,6 +16,14 @@ export interface UserContext {
   lastActivity: number
 }
 
+// Discord Thread 上下文（用于 Thread 级实例选择）
+export interface ChatContext {
+  chatId: number
+  selectedInstanceId?: string
+  selectedSessionId?: string
+  lastActivity: number
+}
+
 // 最近使用的实例+会话组合
 export interface RecentCombo {
   instanceId: string      // 实例 ID（工作目录路径）

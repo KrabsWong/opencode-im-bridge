@@ -737,20 +737,35 @@ export class MessageRouter {
 
   // 处理直接消息
   private async handleDirectMessage(text: string, userId: string, chatId: number): Promise<void> {
+    console.log(`[MessageRouter] handleDirectMessage: userId=${userId}, chatId=${chatId}, text="${text.substring(0, 30)}..."`)
+    
+    // 判断是否为 Discord 模式（使用 chat-level 路由）
+    const isDiscordMode = this.adapter instanceof DiscordAdapter
+    
     // Discord 模式：如果在 Thread 中，自动选择对应的 Instance
-    if (this.adapter instanceof DiscordAdapter) {
-      const threadInstanceId = this.adapter.getInstanceIdByChatId(chatId)
+    if (isDiscordMode) {
+      const discordAdapter = this.adapter as DiscordAdapter
+      const threadInstanceId = discordAdapter.getInstanceIdByChatId(chatId)
+      console.log(`[MessageRouter] Discord mode: chatId=${chatId} -> instanceId=${threadInstanceId || 'not found'}`)
       if (threadInstanceId) {
         const threadInstance = this.registry.getInstance(threadInstanceId)
         if (threadInstance) {
-          // 自动选择该 Instance
-          this.registry.setUserInstance(userId, threadInstanceId)
+          // 在 Discord 模式下，使用 chat-level 存储
+          this.registry.setChatInstance(chatId, threadInstanceId)
           console.log(`[MessageRouter] Auto-selected instance ${threadInstanceId} for Discord thread ${chatId}`)
+        } else {
+          console.warn(`[MessageRouter] Instance ${threadInstanceId} not found in registry for chatId ${chatId}`)
         }
+      } else {
+        console.warn(`[MessageRouter] No instance mapping found for chatId ${chatId}`)
       }
     }
 
-    const instance = this.registry.getUserInstance(userId)
+    // 根据模式选择获取实例的方式
+    const instance = isDiscordMode 
+      ? this.registry.getChatInstance(chatId)
+      : this.registry.getUserInstance(userId)
+    console.log(`[MessageRouter] Current instance: ${instance?.id || 'none'} (mode: ${isDiscordMode ? 'Discord(chat)' : 'Telegram(user)'})`)
 
     if (!instance) {
       const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
@@ -763,8 +778,10 @@ export class MessageRouter {
       return
     }
 
-    // 获取用户选择的 session
-    let sessionId = this.registry.getUserSession(userId)
+    // 根据模式选择获取 session 的方式
+    let sessionId = isDiscordMode
+      ? this.registry.getChatSession(chatId)
+      : this.registry.getUserSession(userId)
     let autoCreated = false
 
     // 如果没有选择 session，尝试获取或创建
@@ -779,7 +796,11 @@ export class MessageRouter {
         // 使用最新的 session
         const latestSession = listResponse.sessions[0]
         sessionId = latestSession.id
-        this.registry.setUserSession(userId, sessionId!)
+        if (isDiscordMode) {
+          this.registry.setChatSession(chatId, sessionId!)
+        } else {
+          this.registry.setUserSession(userId, sessionId!)
+        }
       } else {
         // 没有 session，自动创建
         const createResponse = await this.registry.sendToInstance(instance.id, {
@@ -799,7 +820,11 @@ export class MessageRouter {
         }
         
         sessionId = createResponse.sessionId
-        this.registry.setUserSession(userId, sessionId!)
+        if (isDiscordMode) {
+          this.registry.setChatSession(chatId, sessionId!)
+        } else {
+          this.registry.setUserSession(userId, sessionId!)
+        }
         autoCreated = true
       }
     }

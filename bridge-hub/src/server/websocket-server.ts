@@ -1,10 +1,11 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server } from 'http'
-import type { ConnectedInstance, UserContext, HubMessage } from '../types/index.js'
+import type { ConnectedInstance, UserContext, ChatContext, HubMessage } from '../types/index.js'
 
 export class InstanceRegistry {
   private instances: Map<string, ConnectedInstance> = new Map()
   private userContexts: Map<string, UserContext> = new Map()
+  private chatContexts: Map<number, ChatContext> = new Map() // Discord Thread 级上下文
   private authToken: string
 
   constructor(authToken: string) {
@@ -113,6 +114,61 @@ export class InstanceRegistry {
   // 清除用户选中的 session（当切换实例时）
   clearUserSession(userId: string): void {
     const context = this.getUserContext(userId)
+    context.selectedSessionId = undefined
+  }
+
+  // ========== Chat Context (for Discord Thread-level routing) ==========
+
+  // 获取 chat 上下文（Discord Thread 级）
+  getChatContext(chatId: number): ChatContext {
+    if (!this.chatContexts.has(chatId)) {
+      this.chatContexts.set(chatId, {
+        chatId,
+        lastActivity: Date.now()
+      })
+    }
+    return this.chatContexts.get(chatId)!
+  }
+
+  // 设置 chat 选中的实例
+  setChatInstance(chatId: number, instanceId: string): boolean {
+    const instance = this.instances.get(instanceId)
+    if (!instance) {
+      return false
+    }
+
+    const context = this.getChatContext(chatId)
+    context.selectedInstanceId = instanceId
+    context.lastActivity = Date.now()
+    return true
+  }
+
+  // 获取 chat 当前选中的实例
+  getChatInstance(chatId: number): ConnectedInstance | undefined {
+    const context = this.getChatContext(chatId)
+    if (!context.selectedInstanceId) {
+      return undefined
+    }
+    return this.instances.get(context.selectedInstanceId)
+  }
+
+  // 设置 chat 选中的 session
+  setChatSession(chatId: number, sessionId: string): boolean {
+    const context = this.getChatContext(chatId)
+    context.selectedSessionId = sessionId
+    context.lastActivity = Date.now()
+    return true
+  }
+
+  // 获取 chat 当前选中的 session
+  getChatSession(chatId: number): string | undefined {
+    const context = this.getChatContext(chatId)
+    return context.selectedSessionId
+  }
+
+  // 清除 chat 选中的 session
+  clearChatSession(chatId: number): void {
+    const context = this.getChatContext(chatId)
     context.selectedSessionId = undefined
   }
 
