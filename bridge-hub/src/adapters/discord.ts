@@ -167,36 +167,52 @@ export class DiscordAdapter implements IMAdapter {
 
     // 2. 通过 Guild API 查询活跃线程
     if (this.guildId) {
-      const existingThreadId = await this.findThreadByName(threadName)
-      if (existingThreadId) {
-        console.log(`[Discord] Found existing thread by name "${threadName}": ${existingThreadId}`)
+      const threadInfo = await this.findThreadByName(threadName)
+      if (threadInfo) {
+        const { threadId, isArchived } = threadInfo
+        console.log(`[Discord] Found existing thread by name "${threadName}": ${threadId} (archived: ${isArchived})`)
+        
+        // 如果 Thread 已归档，尝试取消归档
+        if (isArchived) {
+          console.log(`[Discord] Thread ${threadId} is archived, attempting to unarchive...`)
+          try {
+            await this.fetchWithAuth(`/channels/${threadId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ archived: false })
+            })
+            console.log(`[Discord] ✓ Successfully unarchived thread: ${threadId}`)
+          } catch (unarchiveError) {
+            console.warn(`[Discord] Failed to unarchive thread ${threadId}:`, unarchiveError)
+            // 继续尝试使用，可能无法发送消息
+          }
+        }
         
         // 创建映射
         this.chatIdCounter++
         const numberChatId = this.chatIdCounter
         const mapping: ThreadMapping = {
           instanceId,
-          threadId: existingThreadId,
+          threadId: threadId,
           channelId: this.channelId,
           lastActivity: Date.now(),
           numberChatId
         }
         this.instanceThreads.set(instanceId, mapping)
-        this.chatIdToThread.set(numberChatId, existingThreadId)
+        this.chatIdToThread.set(numberChatId, threadId)
         
         // 重新加入 thread
         try {
-          await this.fetchWithAuth(`/channels/${existingThreadId}/thread-members/@me`, {
+          await this.fetchWithAuth(`/channels/${threadId}/thread-members/@me`, {
             method: 'PUT'
           })
-          console.log(`[Discord] Re-joined thread ${existingThreadId}`)
+          console.log(`[Discord] Re-joined thread ${threadId}`)
         } catch (joinError) {
           console.warn(`[Discord] Failed to join thread:`, joinError)
         }
         
         // 发送重新连接通知
         try {
-          await this.fetchWithAuth(`/channels/${existingThreadId}/messages`, {
+          await this.fetchWithAuth(`/channels/${threadId}/messages`, {
             method: 'POST',
             body: JSON.stringify({
               content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
@@ -206,7 +222,7 @@ export class DiscordAdapter implements IMAdapter {
           console.warn(`[Discord] Failed to send reconnection message:`, msgError)
         }
         
-        return existingThreadId
+        return threadId
       }
     }
 
@@ -217,8 +233,9 @@ export class DiscordAdapter implements IMAdapter {
 
   /**
    * 通过 Guild API 按名称查找 Thread
+   * 返回 threadId 和是否已归档
    */
-  private async findThreadByName(threadName: string): Promise<string | undefined> {
+  private async findThreadByName(threadName: string): Promise<{ threadId: string; isArchived: boolean } | undefined> {
     if (!this.guildId) {
       console.warn(`[Discord] No guildId available, cannot query threads`)
       return undefined
@@ -239,8 +256,9 @@ export class DiscordAdapter implements IMAdapter {
       for (const thread of response.threads || []) {
         // 只找属于当前频道的 thread
         if (thread.parent_id === this.channelId && thread.name === threadName) {
-          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: "${thread.name}")`)
-          return thread.id
+          const isArchived = thread.thread_metadata?.archived || false
+          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: "${thread.name}", archived: ${isArchived})`)
+          return { threadId: thread.id, isArchived }
         }
       }
       
