@@ -130,11 +130,11 @@ export class InstanceRegistry {
     return new Promise((resolve, reject) => {
       const requestId = generateRequestId()
       
-      // 使用更长的超时时间（5分钟），因为AI响应可能需要较长时间
+      // 使用更长的超时时间（60分钟），因为AI响应可能需要较长时间
       const timeout = setTimeout(() => {
         cleanup()
-        reject(new Error(`Request to ${instanceId} timeout after 5 minutes`))
-      }, 300000) // 5分钟超时
+        reject(new Error(`Request to ${instanceId} timeout after 60 minutes`))
+      }, 3600000) // 60分钟超时
 
       const handler = (event: MessageEvent) => {
         try {
@@ -186,6 +186,8 @@ export class HubWebSocketServer {
   private wss: WebSocketServer
   private registry: InstanceRegistry
   private eventHandlers: Array<(instanceId: string, eventType: string, data: any) => void> = []
+  private connectHandlers: Array<(instanceId: string, workspace: string) => void> = []
+  private disconnectHandlers: Array<(instanceId: string) => void> = []
 
   constructor(port: number, authToken: string) {
     this.registry = new InstanceRegistry(authToken)
@@ -204,6 +206,16 @@ export class HubWebSocketServer {
   // 注册事件处理器
   onEvent(handler: (instanceId: string, eventType: string, data: any) => void): void {
     this.eventHandlers.push(handler)
+  }
+
+  // 注册实例连接处理器
+  onInstanceConnect(handler: (instanceId: string, workspace: string) => void): void {
+    this.connectHandlers.push(handler)
+  }
+
+  // 注册实例断开处理器
+  onInstanceDisconnect(handler: (instanceId: string) => void): void {
+    this.disconnectHandlers.push(handler)
   }
 
   private handleConnection(socket: WebSocket, _request: any): void {
@@ -255,6 +267,15 @@ export class HubWebSocketServer {
 
             this.registry.register(instance)
 
+            // 触发实例连接处理器
+            this.connectHandlers.forEach(handler => {
+              try {
+                handler(instance.id, instance.workspace)
+              } catch (err) {
+                console.error('Error handling instance connect:', err)
+              }
+            })
+
             socket.send(JSON.stringify({
               type: 'registered',
               data: { success: true, instanceId }
@@ -291,6 +312,14 @@ export class HubWebSocketServer {
     socket.on('close', () => {
       if (instanceId) {
         this.registry.unregister(instanceId)
+        // 触发断开处理器
+        this.disconnectHandlers.forEach(handler => {
+          try {
+            handler(instanceId!)
+          } catch (err) {
+            console.error('Error handling disconnect:', err)
+          }
+        })
       }
       console.log('WebSocket connection closed')
     })

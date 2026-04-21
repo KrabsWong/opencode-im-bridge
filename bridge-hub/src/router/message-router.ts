@@ -1,5 +1,6 @@
 import type { InstanceRegistry } from '../server/websocket-server.js'
 import type { IMAdapter, IMMessage, IMCallbackQuery, IMOutgoingMessage, IMKeyboard, RecentCombo } from '../types/index.js'
+import { DiscordAdapter } from '../adapters/discord.js'
 import { markdownToEntities, splitEntities } from '../core/markdown-entities.js'
 
 // 正在处理的消息信息
@@ -53,7 +54,7 @@ export class MessageRouter {
     this.allowedChats = new Set(allowedChats)
 
     // 定期清理过期的 pending messages
-    setInterval(() => this.cleanupPendingMessages(), 300000) // 5分钟
+    setInterval(() => this.cleanupPendingMessages(), 3600000) // 60分钟
   }
 
   // 清理过期的 pending messages
@@ -736,6 +737,19 @@ export class MessageRouter {
 
   // 处理直接消息
   private async handleDirectMessage(text: string, userId: string, chatId: number): Promise<void> {
+    // Discord 模式：如果在 Thread 中，自动选择对应的 Instance
+    if (this.adapter instanceof DiscordAdapter) {
+      const threadInstanceId = this.adapter.getInstanceIdByChatId(chatId)
+      if (threadInstanceId) {
+        const threadInstance = this.registry.getInstance(threadInstanceId)
+        if (threadInstance) {
+          // 自动选择该 Instance
+          this.registry.setUserInstance(userId, threadInstanceId)
+          console.log(`[MessageRouter] Auto-selected instance ${threadInstanceId} for Discord thread ${chatId}`)
+        }
+      }
+    }
+
     const instance = this.registry.getUserInstance(userId)
 
     if (!instance) {
@@ -1210,19 +1224,6 @@ export class MessageRouter {
     // 获取 session 标题
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
-    // 构建消息文本（统一代码块格式）
-    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
-    text += `🦀 **蟹老板需要您的确认：**\n\n`
-    text += `**${question.header}**\n\n`
-    text += `${question.question}\n\n`
-
-    if (question.options?.length > 0) {
-      text += `**选项:**\n`
-      question.options.forEach((opt: any, idx: number) => {
-        text += `${idx + 1}. **${opt.label}**: ${opt.description}\n`
-      })
-    }
-
     // 构建键盘
     const keyboard: IMKeyboard = { inline: [] }
     if (question.options?.length > 0) {
@@ -1238,6 +1239,54 @@ export class MessageRouter {
       text: '拒绝回答',
       callbackData: `reply:${id}:__reject__`
     }])
+
+    // 检测是否为 Discord Adapter
+    if (this.adapter instanceof DiscordAdapter) {
+      // Discord 模式：使用 Thread 发送
+      const instance = this.registry.getInstance(instanceId)
+      if (!instance) {
+        console.error(`[MessageRouter] Instance ${instanceId} not found`)
+        return
+      }
+
+      try {
+        const result = await this.adapter.sendInstanceMessage(
+          instanceId,
+          instance.workspace,
+          `**${question.header}**\n\n${question.question}`,
+          { sessionId, sessionTitle },
+          keyboard
+        )
+
+        // 保存到 pending messages
+        this.pendingMessages.set(id, {
+          chatId: result.chatId,
+          messageId: result.messageId,
+          instanceId,
+          sessionId,
+          sessionTitle,
+          timestamp: Date.now()
+        })
+
+        console.log(`[MessageRouter] Question sent to Discord thread: ${id}, messageId: ${result.messageId}`)
+      } catch (err) {
+        console.error('[MessageRouter] Error sending question to Discord:', err)
+      }
+      return
+    }
+
+    // Telegram 模式
+    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
+    text += `🦀 **蟹老板需要您的确认：**\n\n`
+    text += `**${question.header}**\n\n`
+    text += `${question.question}\n\n`
+
+    if (question.options?.length > 0) {
+      text += `**选项:**\n`
+      question.options.forEach((opt: any, idx: number) => {
+        text += `${idx + 1}. **${opt.label}**: ${opt.description}\n`
+      })
+    }
 
     const chatId = this.getDefaultChatId()
     if (!chatId) {
@@ -1278,18 +1327,6 @@ export class MessageRouter {
     // 获取 session 标题
     const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
 
-    // 构建消息文本（统一代码块格式）
-    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
-    text += `🦀 **蟹老板请求权限：**\n\n`
-    text += `**权限:** ${permission}\n\n`
-
-    if (patterns?.length > 0) {
-      text += `**路径:**\n`
-      patterns.forEach((pattern: string, idx: number) => {
-        text += `${idx + 1}. \`${pattern}\`\n`
-      })
-    }
-
     // 构建键盘
     const keyboard: IMKeyboard = {
       inline: [
@@ -1301,6 +1338,60 @@ export class MessageRouter {
           { text: '拒绝', callbackData: `permission:${id}:reject` }
         ]
       ]
+    }
+
+    // 检测是否为 Discord Adapter
+    if (this.adapter instanceof DiscordAdapter) {
+      // Discord 模式：使用 Thread 发送
+      const instance = this.registry.getInstance(instanceId)
+      if (!instance) {
+        console.error(`[MessageRouter] Instance ${instanceId} not found`)
+        return
+      }
+
+      let content = `**🦀 蟹老板请求权限**\n\n**权限:** ${permission}\n\n`
+      if (patterns?.length > 0) {
+        content += `**路径:**\n`
+        patterns.forEach((pattern: string, idx: number) => {
+          content += `${idx + 1}. \`${pattern}\`\n`
+        })
+      }
+
+      try {
+        const result = await this.adapter.sendInstanceMessage(
+          instanceId,
+          instance.workspace,
+          content,
+          { sessionId, sessionTitle },
+          keyboard
+        )
+
+        // 保存到 pending permissions
+        this.pendingPermissions.set(id, {
+          chatId: result.chatId,
+          messageId: result.messageId,
+          instanceId,
+          sessionId,
+          timestamp: Date.now()
+        })
+
+        console.log(`[MessageRouter] Permission request sent to Discord thread: ${id}, messageId: ${result.messageId}`)
+      } catch (err) {
+        console.error('[MessageRouter] Error sending permission request to Discord:', err)
+      }
+      return
+    }
+
+    // Telegram 模式
+    let text = `**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\`\n\n`
+    text += `🦀 **蟹老板请求权限：**\n\n`
+    text += `**权限:** ${permission}\n\n`
+
+    if (patterns?.length > 0) {
+      text += `**路径:**\n`
+      patterns.forEach((pattern: string, idx: number) => {
+        text += `${idx + 1}. \`${pattern}\`\n`
+      })
     }
 
     const chatId = this.getDefaultChatId()

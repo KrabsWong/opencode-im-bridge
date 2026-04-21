@@ -20,7 +20,7 @@ export class TelegramAdapter implements IMAdapter {
   private running: boolean = false
   private messageHandlers: Array<(message: IMMessage) => void> = []
   private callbackHandlers: Array<(callback: IMCallbackQuery) => void> = []
-  private readonly TIMEOUT_MS = 300000 // 5分钟超时，与WebSocket超时一致
+  private readonly TIMEOUT_MS = 3600000 // 60分钟超时，与WebSocket超时一致
 
   constructor(botToken?: string) {
     this.botToken = botToken || ''
