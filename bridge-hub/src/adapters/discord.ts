@@ -198,21 +198,36 @@ export class DiscordAdapter implements IMAdapter {
    * 查找已存在的 Thread（用于跨重启恢复）
    */
   private async findExistingThread(threadName: string): Promise<string | undefined> {
+    console.log(`[Discord] Looking for existing thread with name: ${threadName}`)
+    
     try {
       // 获取频道中所有活跃的 threads
-      const threads = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
+      console.log(`[Discord] Fetching active threads from channel ${this.channelId}...`)
+      const response = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
         `/channels/${this.channelId}/threads/active`
       )
       
+      console.log(`[Discord] Found ${response.threads?.length || 0} active threads`)
+      
+      // 打印所有 threads 名称用于调试
+      if (response.threads && response.threads.length > 0) {
+        console.log(`[Discord] Active threads list:`)
+        for (const thread of response.threads) {
+          console.log(`  - "${thread.name}" (id: ${thread.id}, archived: ${thread.thread_metadata?.archived})`)
+        }
+      }
+      
       // 查找匹配的 thread（按名称）
-      for (const thread of threads.threads) {
+      for (const thread of response.threads || []) {
         if (thread.name === threadName && !thread.thread_metadata?.archived) {
-          console.log(`[Discord] Found matching thread: ${thread.id} (name: ${thread.name})`)
+          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: ${thread.name})`)
           return thread.id
         }
       }
+      
+      console.log(`[Discord] ✗ No matching thread found for name: ${threadName}`)
     } catch (error) {
-      console.warn(`[Discord] Failed to list existing threads:`, error)
+      console.error(`[Discord] Failed to list existing threads:`, error)
     }
     return undefined
   }
