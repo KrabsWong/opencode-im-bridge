@@ -137,14 +137,70 @@ export class DiscordAdapter implements IMAdapter {
       const thread = await this.getThread(existing.threadId)
       if (thread && !thread.thread_metadata?.archived) {
         existing.lastActivity = Date.now()
+        console.log(`[Discord] Reusing existing thread for ${instanceId}: ${existing.threadId}`)
         return existing.threadId
       }
       // Thread 已归档或不存在，删除旧映射
+      console.log(`[Discord] Existing thread archived or deleted, creating new one`)
       this.instanceThreads.delete(instanceId)
+    }
+
+    // 尝试从 Discord 查找已存在的 thread（跨重启恢复）
+    const threadName = instanceName.split('/').pop() || instanceId
+    const existingThreadId = await this.findExistingThread(threadName)
+    if (existingThreadId) {
+      console.log(`[Discord] Found existing thread in Discord for ${instanceId}: ${existingThreadId}`)
+      // 重新加入 thread
+      try {
+        await this.fetchWithAuth(`/channels/${existingThreadId}/thread-members/@me`, {
+          method: 'PUT'
+        })
+        console.log(`[Discord] Re-joined existing thread`)
+      } catch (joinError) {
+        console.warn(`[Discord] Warning: Failed to join existing thread:`, joinError)
+      }
+      
+      // 恢复映射关系
+      this.chatIdCounter++
+      const numberChatId = this.chatIdCounter
+      const mapping: ThreadMapping = {
+        instanceId,
+        threadId: existingThreadId,
+        channelId: this.channelId,
+        lastActivity: Date.now(),
+        numberChatId
+      }
+      this.instanceThreads.set(instanceId, mapping)
+      this.chatIdToThread.set(numberChatId, existingThreadId)
+      
+      return existingThreadId
     }
 
     // 创建新的 thread
     return this.createThread(instanceId, instanceName)
+  }
+
+  /**
+   * 查找已存在的 Thread（用于跨重启恢复）
+   */
+  private async findExistingThread(threadName: string): Promise<string | undefined> {
+    try {
+      // 获取频道中所有活跃的 threads
+      const threads = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
+        `/channels/${this.channelId}/threads/active`
+      )
+      
+      // 查找匹配的 thread（按名称）
+      for (const thread of threads.threads) {
+        if (thread.name === threadName && !thread.thread_metadata?.archived) {
+          console.log(`[Discord] Found matching thread: ${thread.id} (name: ${thread.name})`)
+          return thread.id
+        }
+      }
+    } catch (error) {
+      console.warn(`[Discord] Failed to list existing threads:`, error)
+    }
+    return undefined
   }
 
   /**
