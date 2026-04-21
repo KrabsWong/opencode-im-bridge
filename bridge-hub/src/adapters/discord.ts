@@ -361,19 +361,22 @@ export class DiscordAdapter implements IMAdapter {
     instanceName: string,
     reason: 'connect' | 'reconnect'
   ): Promise<void> {
-    const emoji = reason === 'connect' ? '🟢' : '🔄'
-    const label = reason === 'connect' ? 'Instance Connected' : 'Instance Reconnected'
-    const content = [
-      `${emoji} **${label}**`,
-      `📁 **Workspace**: \`${instanceName}\``,
-      `🆔 **Instance ID**: \`${instanceId}\``,
-      `⏰ ${new Date().toLocaleString()}`
-    ].join('\n')
+    const isConnect = reason === 'connect'
+    const label = isConnect ? 'Instance Connected' : 'Instance Reconnected'
+    const embed: DiscordEmbed = {
+      title: isConnect ? '🟢 Instance Connected' : '🔄 Instance Reconnected',
+      color: isConnect ? 0x57F287 : 0xFEE75C, // 绿 / 黄
+      fields: [
+        { name: 'Workspace', value: `\`${instanceName}\``, inline: false },
+        { name: 'Instance ID', value: `\`${instanceId}\``, inline: false }
+      ],
+      timestamp: new Date().toISOString()
+    }
 
     try {
       await this.fetchWithAuth<{ id: string }>(`/channels/${threadId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ embeds: [embed] })
       })
       console.log(`[Discord] ✓ Sent "${label}" message to thread ${threadId}`)
     } catch (error) {
@@ -464,19 +467,24 @@ export class DiscordAdapter implements IMAdapter {
       return
     }
 
-    const workspaceInfo = instanceName ? `\n📁 **Workspace**: \`${instanceName}\`` : ''
-    const content = [
-      `🔴 **Instance Disconnected**`,
-      `🆔 **Instance ID**: \`${instanceId}\`${workspaceInfo}`,
-      `⏰ ${new Date().toLocaleString()}`,
-      ``,
-      `_Thread will auto-archive after 7 days of inactivity_`
-    ].join('\n')
+    const fields: DiscordEmbed['fields'] = [
+      { name: 'Instance ID', value: `\`${instanceId}\``, inline: false }
+    ]
+    if (instanceName) {
+      fields.unshift({ name: 'Workspace', value: `\`${instanceName}\``, inline: false })
+    }
+    const embed: DiscordEmbed = {
+      title: '🔴 Instance Disconnected',
+      color: 0xED4245, // 红
+      fields,
+      footer: { text: 'Thread will auto-archive after 7 days of inactivity' },
+      timestamp: new Date().toISOString()
+    }
 
     try {
       await this.fetchWithAuth(`/channels/${mapping.threadId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ embeds: [embed] })
       })
       console.log(`[Discord] Sent disconnect notification for instance ${instanceId}`)
     } catch (error) {
@@ -500,34 +508,36 @@ export class DiscordAdapter implements IMAdapter {
 
   /**
    * 发送消息（IMAdapter 接口实现）
-   * Discord 限制: 内容最多 2000 字符
+   * 使用 Embed 发送，解决连续消息聚合难以区分的问题。
+   * Discord Embed description 上限 4096 字符，超出时拆分为多个 embed。
    */
   async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
-    // 通过 chatId 查找真正的 threadId
     const threadId = this.chatIdToThread.get(message.chatId)
     if (!threadId) {
       throw new Error(`Unknown chatId: ${message.chatId}. Thread may not exist.`)
     }
     console.log(`[Discord] Sending message to thread ${threadId} (chatId: ${message.chatId}, length: ${message.text.length})`)
 
-    // Discord 内容限制 2000 字符，留 50 字符余量
-    const MAX_LENGTH = 1950
+    // Embed description 上限 4096，留 96 字符余量
+    const MAX_EMBED_LENGTH = 4000
+    const chunks = this.splitMessage(message.text, MAX_EMBED_LENGTH)
     let lastMessageId = ''
 
-    // 分割长消息
-    const chunks = this.splitMessage(message.text, MAX_LENGTH)
-    
     for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
       const isLastChunk = i === chunks.length - 1
+      const isMultiChunk = chunks.length > 1
+
+      const embed: DiscordEmbed = {
+        description: chunks[i],
+        color: 0x5865F2, // Discord 品牌紫，AI 响应专用色
+        timestamp: isLastChunk ? new Date().toISOString() : undefined,
+        footer: isMultiChunk ? { text: `Part ${i + 1} / ${chunks.length}` } : undefined
+      }
 
       const payload: {
-        content: string
-        embeds?: DiscordEmbed[]
+        embeds: DiscordEmbed[]
         components?: DiscordComponent[]
-      } = {
-        content: chunk
-      }
+      } = { embeds: [embed] }
 
       // 只在最后一条消息添加按钮
       if (isLastChunk && message.replyMarkup) {
@@ -536,12 +546,8 @@ export class DiscordAdapter implements IMAdapter {
 
       const response = await this.fetchWithAuth<{ id: string }>(
         `/channels/${threadId}/messages`,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        }
+        { method: 'POST', body: JSON.stringify(payload) }
       )
-
       lastMessageId = response.id
     }
 
@@ -593,12 +599,11 @@ export class DiscordAdapter implements IMAdapter {
   }
 
   /**
-   * 编辑消息
+   * 编辑消息（同步更新 embed description）
    */
   async editMessage(messageId: string, message: Partial<IMOutgoingMessage>): Promise<void> {
     if (!message.chatId) return
-    
-    // 通过 chatId 查找真正的 threadId
+
     const threadId = this.chatIdToThread.get(message.chatId)
     if (!threadId) {
       console.error(`[Discord] Cannot edit message: unknown chatId ${message.chatId}`)
@@ -606,12 +611,16 @@ export class DiscordAdapter implements IMAdapter {
     }
 
     const payload: {
-      content?: string
+      embeds?: DiscordEmbed[]
       components?: DiscordComponent[]
     } = {}
 
     if (message.text) {
-      payload.content = message.text
+      payload.embeds = [{
+        description: message.text,
+        color: 0x5865F2,
+        timestamp: new Date().toISOString()
+      }]
     }
 
     if (message.replyMarkup) {
