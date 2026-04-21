@@ -196,39 +196,64 @@ export class DiscordAdapter implements IMAdapter {
 
   /**
    * 查找已存在的 Thread（用于跨重启恢复）
+   * 首先查找活跃的 threads，如果没有则查找已归档的 threads 并尝试恢复
    */
   private async findExistingThread(threadName: string): Promise<string | undefined> {
     console.log(`[Discord] Looking for existing thread with name: ${threadName}`)
     
+    // 1. 先查找活跃的 threads
     try {
-      // 获取频道中所有活跃的 threads
       console.log(`[Discord] Fetching active threads from channel ${this.channelId}...`)
-      const response = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
+      const activeResponse = await this.fetchWithAuth<{ threads: DiscordThread[] }>(
         `/channels/${this.channelId}/threads/active`
       )
       
-      console.log(`[Discord] Found ${response.threads?.length || 0} active threads`)
+      console.log(`[Discord] Found ${activeResponse.threads?.length || 0} active threads`)
       
-      // 打印所有 threads 名称用于调试
-      if (response.threads && response.threads.length > 0) {
-        console.log(`[Discord] Active threads list:`)
-        for (const thread of response.threads) {
-          console.log(`  - "${thread.name}" (id: ${thread.id}, archived: ${thread.thread_metadata?.archived})`)
-        }
-      }
-      
-      // 查找匹配的 thread（按名称）
-      for (const thread of response.threads || []) {
+      for (const thread of activeResponse.threads || []) {
+        console.log(`[Discord]   - "${thread.name}" (id: ${thread.id}, archived: ${thread.thread_metadata?.archived})`)
         if (thread.name === threadName && !thread.thread_metadata?.archived) {
-          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: ${thread.name})`)
+          console.log(`[Discord] ✓ Found active thread: ${thread.id}`)
           return thread.id
         }
       }
-      
-      console.log(`[Discord] ✗ No matching thread found for name: ${threadName}`)
     } catch (error) {
-      console.error(`[Discord] Failed to list existing threads:`, error)
+      console.warn(`[Discord] Failed to fetch active threads:`, error)
     }
+    
+    // 2. 如果没有找到活跃的 thread，查找已归档的 threads
+    console.log(`[Discord] No active thread found, checking archived threads...`)
+    try {
+      // 获取所有已归档的 public threads
+      const archivedResponse = await this.fetchWithAuth<{ threads: DiscordThread[]; has_more: boolean }>(
+        `/channels/${this.channelId}/threads/archived/public`
+      )
+      
+      console.log(`[Discord] Found ${archivedResponse.threads?.length || 0} archived threads`)
+      
+      for (const thread of archivedResponse.threads || []) {
+        console.log(`[Discord]   - "${thread.name}" (id: ${thread.id}, archived: ${thread.thread_metadata?.archived})`)
+        if (thread.name === threadName) {
+          console.log(`[Discord] ✓ Found archived thread: ${thread.id}, attempting to unarchive...`)
+          
+          // 尝试取消归档
+          try {
+            await this.fetchWithAuth(`/channels/${thread.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ archived: false })
+            })
+            console.log(`[Discord] ✓ Successfully unarchived thread: ${thread.id}`)
+            return thread.id
+          } catch (unarchiveError) {
+            console.warn(`[Discord] Failed to unarchive thread ${thread.id}:`, unarchiveError)
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[Discord] Failed to fetch archived threads:`, error)
+    }
+    
+    console.log(`[Discord] ✗ No existing thread found for name: ${threadName}`)
     return undefined
   }
 
