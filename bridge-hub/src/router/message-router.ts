@@ -778,33 +778,33 @@ export class MessageRouter {
   private async handleDirectMessage(text: string, userId: string, chatId: number): Promise<void> {
     console.log(`[MessageRouter] handleDirectMessage: userId=${userId}, chatId=${chatId}, text="${text.substring(0, 30)}..."`)
     
-    // 判断是否为 Discord 模式（使用 chat-level 路由）
-    const isDiscordMode = this.adapter instanceof DiscordAdapter
+    // 检查适配器是否支持基于 chat 的自动路由（如 Discord Thread）
+    const adapterSupportsChatRouting = typeof this.adapter.getInstanceIdForChat === 'function'
+    let autoRoutedInstanceId: string | undefined
     
-    // Discord 模式：如果在 Thread 中，自动选择对应的 Instance
-    if (isDiscordMode) {
-      const discordAdapter = this.adapter as DiscordAdapter
-      const threadInstanceId = discordAdapter.getInstanceIdByChatId(chatId)
-      console.log(`[MessageRouter] Discord mode: chatId=${chatId} -> instanceId=${threadInstanceId || 'not found'}`)
-      if (threadInstanceId) {
-        const threadInstance = this.registry.getInstance(threadInstanceId)
-        if (threadInstance) {
-          // 在 Discord 模式下，使用 chat-level 存储
-          this.registry.setChatInstance(chatId, threadInstanceId)
-          console.log(`[MessageRouter] Auto-selected instance ${threadInstanceId} for Discord thread ${chatId}`)
+    if (adapterSupportsChatRouting) {
+      // 适配器支持 chat-level 路由，尝试获取对应的 instance
+      autoRoutedInstanceId = this.adapter.getInstanceIdForChat!(chatId)
+      console.log(`[MessageRouter] Adapter supports chat routing: chatId=${chatId} -> instanceId=${autoRoutedInstanceId || 'not found'}`)
+      
+      if (autoRoutedInstanceId) {
+        const targetInstance = this.registry.getInstance(autoRoutedInstanceId)
+        if (targetInstance) {
+          // 使用 chat-level 存储实例选择
+          this.registry.setChatInstance(chatId, autoRoutedInstanceId)
+          console.log(`[MessageRouter] Auto-selected instance ${autoRoutedInstanceId} for chat ${chatId}`)
         } else {
-          console.warn(`[MessageRouter] Instance ${threadInstanceId} not found in registry for chatId ${chatId}`)
+          console.warn(`[MessageRouter] Auto-routed instance ${autoRoutedInstanceId} not found in registry`)
+          autoRoutedInstanceId = undefined
         }
-      } else {
-        console.warn(`[MessageRouter] No instance mapping found for chatId ${chatId}`)
       }
     }
 
-    // 根据模式选择获取实例的方式
-    const instance = isDiscordMode 
+    // 根据适配器能力选择获取实例的方式
+    const instance = adapterSupportsChatRouting
       ? this.registry.getChatInstance(chatId)
       : this.registry.getUserInstance(userId)
-    console.log(`[MessageRouter] Current instance: ${instance?.id || 'none'} (mode: ${isDiscordMode ? 'Discord(chat)' : 'Telegram(user)'})`)
+    console.log(`[MessageRouter] Current instance: ${instance?.id || 'none'} (routing: ${adapterSupportsChatRouting ? 'chat-level' : 'user-level'})`)
 
     if (!instance) {
       const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
@@ -817,8 +817,8 @@ export class MessageRouter {
       return
     }
 
-    // 根据模式选择获取 session 的方式
-    let sessionId = isDiscordMode
+    // 根据适配器能力选择获取 session 的方式
+    let sessionId = adapterSupportsChatRouting
       ? this.registry.getChatSession(chatId)
       : this.registry.getUserSession(userId)
     let autoCreated = false
@@ -835,7 +835,7 @@ export class MessageRouter {
         // 使用最新的 session
         const latestSession = listResponse.sessions[0]
         sessionId = latestSession.id
-        if (isDiscordMode) {
+        if (adapterSupportsChatRouting) {
           this.registry.setChatSession(chatId, sessionId!)
         } else {
           this.registry.setUserSession(userId, sessionId!)
@@ -859,7 +859,7 @@ export class MessageRouter {
         }
         
         sessionId = createResponse.sessionId
-        if (isDiscordMode) {
+        if (adapterSupportsChatRouting) {
           this.registry.setChatSession(chatId, sessionId!)
         } else {
           this.registry.setUserSession(userId, sessionId!)

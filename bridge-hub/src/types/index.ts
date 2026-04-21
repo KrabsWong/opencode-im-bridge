@@ -137,6 +137,16 @@ export interface IMAdapter {
   deleteMessage?(chatId: number, messageId: string): Promise<void>
 
   /**
+   * Get the instance ID associated with a specific chat/channel/thread
+   * Used for auto-routing messages in platforms like Discord where
+   * each chat/thread maps to a specific instance
+   * 
+   * @param chatId The chat/channel/thread ID
+   * @returns The instance ID if determined by the adapter, undefined otherwise
+   */
+  getInstanceIdForChat?(chatId: number): string | undefined
+
+  /**
    * Set up message handler for incoming messages
    */
   onMessage(handler: (message: IMMessage) => void): void

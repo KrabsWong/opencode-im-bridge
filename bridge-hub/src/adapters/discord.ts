@@ -986,9 +986,10 @@ export class DiscordAdapter implements IMAdapter {
   }
 
   /**
-   * 通过 chatId 查找 Instance ID（用于 Thread 自动路由）
+   * 通过 chatId 查找 Instance ID（IMAdapter 接口实现）
+   * 用于 Thread 自动路由 - Discord 中每个 Thread 对应一个 Instance
    */
-  getInstanceIdByChatId(chatId: number): string | undefined {
+  getInstanceIdForChat(chatId: number): string | undefined {
     console.log(`[Discord] Looking up instance for chatId ${chatId}, tracked threads: ${this.instanceThreads.size}`)
     for (const [instanceId, mapping] of this.instanceThreads) {
       console.log(`[Discord]   Checking: instance=${instanceId}, chatId=${mapping.numberChatId}, threadId=${mapping.threadId}`)
