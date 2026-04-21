@@ -250,12 +250,13 @@ export class MessageRouter {
           // 清除之前选择的 session
           this.registry.clearUserSession(callback.user.id)
 
-          await this.sendMarkdownWithEntities(
-            callback.chatId,
-            `**已选择实例**: ${instanceId}`,
-            '',
-            '请使用 /sessions 查看并选择要使用的 session。'
-          )
+          const result = markdownToEntities(`**已选择实例**: ${instanceId}\n\n请使用 /sessions 查看并选择要使用的 session。`)
+          await this.sendMessage({
+            chatId: callback.chatId,
+            text: result.text,
+            parseMode: 'entities',
+            entities: result.entities
+          })
         }
         break
 
@@ -286,12 +287,13 @@ export class MessageRouter {
           await (this.adapter as any).answerCallbackQuery(callback.id, `已选择 session`)
         }
 
-        await this.sendMarkdownWithEntities(
-          callback.chatId,
-          `**已选择 Session**: \`${sessionId}\``,
-          '',
-          `实例: **${userInstance.id}**\n\n现在可以直接发送消息了。`
-        )
+        const result = markdownToEntities(`**已选择 Session**: \`${sessionId}\`\n\n实例: **${userInstance.id}**\n\n现在可以直接发送消息了。`)
+        await this.sendMessage({
+          chatId: callback.chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
         break
 
       case 'tui_command':
@@ -341,7 +343,13 @@ export class MessageRouter {
 
       case '/use':
         if (args.length === 0) {
-          await this.sendMarkdownWithEntities(chatId, '❌ **请提供实例 ID**', '', '用法: `/use <instance-id>`')
+          const result = markdownToEntities('❌ **请提供实例 ID**\n用法: `/use <instance-id>`')
+          await this.sendMessage({
+            chatId,
+            text: result.text,
+            parseMode: 'entities',
+            entities: result.entities
+          })
           return
         }
         await this.selectInstance(userId, chatId, args[0])
@@ -364,7 +372,13 @@ export class MessageRouter {
         break
 
       default:
-        await this.sendMarkdownWithEntities(chatId, `❓ **未知命令**: ${command}`, '', '使用 /help 查看可用命令')
+        const result = markdownToEntities(`❓ **未知命令**: ${command}\n使用 /help 查看可用命令`)
+        await this.sendMessage({
+          chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
     }
   }
 
@@ -394,7 +408,13 @@ export class MessageRouter {
 使用 /go 可快速切换到最近使用过的 5 个会话组合
     `.trim()
 
-    await this.sendMarkdownWithEntities(chatId, text, '', '')
+    const result = markdownToEntities(text)
+    await this.sendMessage({
+      chatId,
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities
+    })
   }
 
   // 发送远程控制面板
@@ -432,13 +452,634 @@ export class MessageRouter {
       ]
     }
 
-    await this.sendMarkdownWithEntities(
+    const result = markdownToEntities(text)
+    await this.sendMessage({
+      chatId,
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities,
+      replyMarkup: keyboard
+    })
+  }
+
+  // 显示最近使用的组合
+  private async showRecentCombos(userId: string, chatId: number): Promise<void> {
+    const availableCombos = this.getAvailableRecentCombos(userId)
+
+    if (availableCombos.length === 0) {
+      const result = markdownToEntities('🚀 **快速切换**\n\n暂无最近使用的会话组合。\n\n请先使用 /instances 开始。')
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    let markdownText = '🚀 **快速切换**\n\n最近使用的会话组合：\n\n'
+
+    // 在文字中详细展示所有组合
+    availableCombos.forEach((combo, index) => {
+      const timeAgo = this.formatTimeAgo(combo.lastUsedAt)
+      markdownText += `${index + 1}. **${combo.instanceName}**\n`
+      markdownText += `   会话: ${combo.sessionTitle}\n`
+      markdownText += `   使用: ${timeAgo} (${combo.useCount}次)\n\n`
+    })
+
+    markdownText += '点击按钮快速切换：'
+
+    // 转换为 entities
+    const { text, entities } = markdownToEntities(markdownText)
+
+    const keyboard: IMKeyboard = { inline: [] }
+    const comboMap = new Map<string, RecentCombo>()
+
+    // 每行放 2 个按钮
+    // 使用短ID映射而不是索引，避免实例断开导致索引错位
+    for (let i = 0; i < availableCombos.length; i += 2) {
+      const row: typeof keyboard.inline[0] = []
+
+      for (let j = i; j < Math.min(i + 2, availableCombos.length); j++) {
+        const combo = availableCombos[j]
+        const buttonText = this.generateComboButtonText(combo)
+        // 生成短ID：实例名首字母+会话名首字母+索引（如 p-m-0）
+        const shortId = `${combo.instanceName.charAt(0)}-${combo.sessionTitle.charAt(0)}-${j}`
+        comboMap.set(shortId, combo)
+        row.push({
+          text: buttonText,
+          callbackData: `select_combo:${shortId}`
+        })
+      }
+
+      keyboard.inline.push(row)
+    }
+
+    const result = await this.sendMessage({
       chatId,
       text,
-      '',
-      '',
-      { keyboard }
+      parseMode: 'entities',
+      entities,
+      replyMarkup: keyboard
+    })
+
+    // 保存消息上下文和映射表，用于后续点击查找
+    this.goMessageContexts.set(userId, {
+      chatId,
+      messageId: result.messageId,
+      comboMap
+    })
+  }
+
+  // 列出所有实例
+  private async listInstances(chatId: number): Promise<void> {
+    const instances = this.registry.getAllInstances()
+
+    if (instances.length === 0) {
+      const result = markdownToEntities('**当前没有连接的实例**')
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    let text = '**所有实例**\n\n'
+
+    const keyboard: IMKeyboard = { inline: [] }
+
+    instances.forEach((instance, index) => {
+      const statusText = instance.status === 'connected' ? '[已连接]' : '[已断开]'
+      text += `${index + 1}. \`${instance.id}\`\n`
+      text += `   目录: ${instance.workspace}\n`
+      text += `   状态: ${statusText}\n\n`
+
+      keyboard.inline.push([{
+        text: `选择: ${instance.id.slice(0, 20)}`,
+        callbackData: `select_instance:${instance.id}`
+      }])
+    })
+
+    const result = markdownToEntities(text)
+    await this.sendMessage({
+      chatId,
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities,
+      replyMarkup: keyboard
+    })
+  }
+
+  // 选择实例
+  private async selectInstance(userId: string, chatId: number, instanceId: string): Promise<void> {
+    const success = this.registry.setUserInstance(userId, instanceId)
+
+    if (success) {
+      // 清除之前选择的 session
+      this.registry.clearUserSession(userId)
+
+      const result = markdownToEntities(`**已选择实例**: \`${instanceId}\`\n\n请使用 /sessions 查看并选择要使用的 session。`)
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+    } else {
+      const result = markdownToEntities(`**实例不存在**: \`${instanceId}\`\n\n使用 /instances 查看可用实例。`)
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+    }
+  }
+
+  // 显示当前选中的实例
+  private async showCurrentInstance(userId: string, chatId: number): Promise<void> {
+    const context = this.registry.getUserContext(userId)
+
+    if (!context.selectedInstanceId) {
+      const result = markdownToEntities('**当前没有选择实例**\n\n使用 /instances 查看并选择实例。')
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    const instance = this.registry.getInstance(context.selectedInstanceId)
+
+    if (!instance) {
+      const result = markdownToEntities(`**之前选择的实例** \`${context.selectedInstanceId}\` 已断开连接。\n\n请使用 /instances 重新选择。`)
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    let text = `**当前实例**\n\nID: \`${instance.id}\`\n目录: ${instance.workspace}\n状态: ${instance.status}`
+
+    if (context.selectedSessionId) {
+      text += `\n\n**当前 Session**: \`${context.selectedSessionId}\``
+    } else {
+      text += `\n\n**未选择 Session**\n使用 /sessions 查看可用 sessions。`
+    }
+
+    const result = markdownToEntities(text)
+    await this.sendMessage({
+      chatId,
+      text: result.text,
+      parseMode: 'entities',
+      entities: result.entities
+    })
+  }
+
+  // 列出当前实例的所有 sessions
+  private async listSessions(userId: string, chatId: number): Promise<void> {
+    const instance = this.registry.getUserInstance(userId)
+
+    if (!instance) {
+      const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    // 发送请求获取 sessions 列表
+    try {
+      const response = await this.registry.sendToInstance(instance.id, {
+        type: 'command',
+        command: 'list_sessions'
+      })
+
+      if (response.error) {
+        const result = markdownToEntities(`**获取 Sessions 失败**\n\n${response.error}`)
+        await this.sendMessage({
+          chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+        return
+      }
+
+      const sessions = response.sessions || []
+
+      if (sessions.length === 0) {
+        const result = markdownToEntities('**当前实例没有 Sessions**\n\n请在 OpenCode 中创建新 session。')
+        await this.sendMessage({
+          chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+        return
+      }
+
+      let text = `**instance:** ${instance.id}\n**Sessions:**\n\n`
+      const keyboard: IMKeyboard = { inline: [] }
+
+      sessions.forEach((session: any, index: number) => {
+        const statusText = session.status === 'waiting_user_input' ? '[等待输入]' :
+                           session.status === 'working' ? '[执行中]' : '[空闲]'
+        const todoInfo = session.todoCount > 0 ? ` [${session.completedCount}/${session.todoCount}]` : ''
+        const displayTitle = session.title || '未命名'
+
+        // 列表显示格式: <title>:`<sessionId>`
+        text += `${index + 1}. ${statusText} ${displayTitle}:\`${session.id}\`${todoInfo}\n`
+
+        // 按钮显示标题，如果标题太长则截断
+        const buttonText = displayTitle.length > 30
+          ? `${displayTitle.slice(0, 27)}...${todoInfo}`
+          : `${displayTitle}${todoInfo}`
+
+        keyboard.inline.push([{
+          text: buttonText,
+          callbackData: `select_session:${session.id}`
+        }])
+      })
+
+      text += '\n点击按钮选择要使用的 session。'
+
+      const result = markdownToEntities(text)
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities,
+        replyMarkup: keyboard
+      })
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      const result = markdownToEntities(`**获取 Sessions 失败**\n\n${errorMsg}`)
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+    }
+  }
+
+  // 处理直接消息
+  private async handleDirectMessage(text: string, userId: string, chatId: number): Promise<void> {
+    const instance = this.registry.getUserInstance(userId)
+
+    if (!instance) {
+      const result = markdownToEntities('**请先选择实例**\n\n使用 /instances 查看可用实例。')
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+      return
+    }
+
+    // 获取用户选择的 session
+    let sessionId = this.registry.getUserSession(userId)
+    let autoCreated = false
+
+    // 如果没有选择 session，尝试获取或创建
+    if (!sessionId) {
+      // 先尝试获取最新的 session
+      const listResponse = await this.registry.sendToInstance(instance.id, {
+        type: 'command',
+        command: 'list_sessions'
+      })
+      
+      if (listResponse.sessions && listResponse.sessions.length > 0) {
+        // 使用最新的 session
+        const latestSession = listResponse.sessions[0]
+        sessionId = latestSession.id
+        this.registry.setUserSession(userId, sessionId!)
+      } else {
+        // 没有 session，自动创建
+        const createResponse = await this.registry.sendToInstance(instance.id, {
+          type: 'command',
+          command: 'tui_command',
+          subCommand: 'session_new'
+        })
+        
+        if (createResponse.error || !createResponse.sessionId) {
+          await this.sendMarkdownWithEntities(
+            chatId,
+            '**创建 Session 失败**',
+            '',
+            createResponse.error || '未知错误'
+          )
+          return
+        }
+        
+        sessionId = createResponse.sessionId
+        this.registry.setUserSession(userId, sessionId!)
+        autoCreated = true
+      }
+    }
+
+    // 此时 sessionId 一定存在
+    if (!sessionId) {
+      await this.sendMarkdownWithEntities(
+        chatId,
+        '**Session 获取失败**',
+        '',
+        '无法获取或创建 session'
+      )
+      return
+    }
+
+    // 获取 session 标题
+    const sessionTitle = await this.getSessionTitle(instance.id, sessionId)
+
+    // 记录到最近组合
+    this.recordRecentCombo(
+      userId,
+      instance.id,
+      instance.workspace.split('/').pop() || instance.id,
+      sessionId,
+      sessionTitle
     )
+
+    // 构建消息前缀
+    const infoSection = `**INSTANCE:** \`${instance.id}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\``
+    const processingContent = autoCreated
+      ? '**已自动创建新 Session，正在处理请求...**'
+      : '**正在处理请求...**'
+
+    // 发送"处理中"消息（使用临时文本，稍后会编辑）
+    const processingMsg = await this.sendMessage({
+      chatId,
+      text: '🦀 正在处理...',
+      parseMode: 'Markdown',
+    })
+    
+    // 使用统一方法发送处理中消息
+    await this.sendMarkdownWithEntities(
+      chatId,
+      infoSection,
+      '🦀 **蟹老板说：**',
+      processingContent,
+      { editMessageId: processingMsg.messageId }
+    )
+
+    // 记录正在处理的消息
+    this.pendingMessages.set(processingMsg.messageId, {
+      chatId,
+      messageId: processingMsg.messageId,
+      instanceId: instance.id,
+      sessionId,
+      sessionTitle,
+      timestamp: Date.now()
+    })
+
+    try {
+      // 转发到实例，指定 session
+      const response = await this.registry.sendToInstance(instance.id, {
+        type: 'prompt',
+        text,
+        userId,
+        chatId,
+        sessionId
+      })
+
+      // 从 pending 中移除
+      this.pendingMessages.delete(processingMsg.messageId)
+
+      // 格式化响应
+      const responseText = response.text || '无响应内容'
+
+      // 检查是否为重复响应
+      if (this.isDuplicateResponse(sessionId, responseText)) {
+        await this.sendMarkdownWithEntities(
+          chatId,
+          infoSection,
+          '🦀 **蟹老板说：**',
+          '*[重复响应，已跳过]*',
+          { editMessageId: processingMsg.messageId }
+        )
+        return
+      }
+
+      // 使用统一方法发送响应
+      await this.sendMarkdownWithEntities(
+        chatId,
+        infoSection,
+        '🦀 **蟹老板说：**',
+        responseText,
+        { editMessageId: processingMsg.messageId }
+      )
+    } catch (err) {
+      // 从 pending 中移除
+      this.pendingMessages.delete(processingMsg.messageId)
+
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      await this.sendMarkdownWithEntities(
+        chatId,
+        infoSection,
+        '🦀 **蟹老板说：**',
+        `**请求失败**\n\n${errorMsg}`,
+        { editMessageId: processingMsg.messageId }
+      )
+    }
+  }
+
+  // 获取 session 标题
+  private async getSessionTitle(instanceId: string, sessionId: string): Promise<string> {
+    try {
+      const response = await this.registry.sendToInstance(instanceId, {
+        type: 'command',
+        command: 'get_session_title',
+        sessionId
+      })
+      return response.title || '未命名'
+    } catch {
+      return '未知会话'
+    }
+  }
+
+  // 处理问题回复
+  private async handleQuestionReply(userId: string, requestId: string, value: string): Promise<void> {
+    const instance = this.registry.getUserInstance(userId)
+
+    if (!instance) {
+      console.error('No instance selected for user:', userId)
+      return
+    }
+
+    // 获取 pending question 信息
+    const pendingQuestion = this.pendingMessages.get(requestId)
+
+    try {
+      await this.registry.sendToInstance(instance.id, {
+        type: 'question_reply',
+        requestId,
+        value
+      })
+
+      // 更新 Telegram 消息，移除按钮并显示处理结果
+      if (pendingQuestion && this.adapter.editMessage) {
+        const statusText = value === '__reject__' ? '❌ 已拒绝' : `✅ 已选择: ${value}`
+        const updatedText = `**INSTANCE:** \`${pendingQuestion.instanceId}\`\n**TITLE:** \`${pendingQuestion.sessionTitle}\`\n**SESSION ID:** \`${pendingQuestion.sessionId}\`\n\n🦀 **蟹老板需要您的确认：**\n\n${statusText}`
+        const result = markdownToEntities(updatedText)
+
+        await this.adapter.editMessage(pendingQuestion.messageId, {
+          chatId: pendingQuestion.chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+
+        // 从 pending 中移除
+        this.pendingMessages.delete(requestId)
+      }
+    } catch (err) {
+      console.error('Error sending question reply:', err)
+    }
+  }
+
+  // 处理权限回复
+  private async handlePermissionReply(userId: string, requestId: string, value: 'once' | 'always' | 'reject'): Promise<void> {
+    const instance = this.registry.getUserInstance(userId)
+
+    if (!instance) {
+      console.error('No instance selected for user:', userId)
+      return
+    }
+
+    // 获取 pending permission 信息
+    const pendingPermission = this.pendingPermissions.get(requestId)
+
+    try {
+      await this.registry.sendToInstance(instance.id, {
+        type: 'permission_reply',
+        requestId,
+        value
+      })
+
+      // 更新 Telegram 消息，移除按钮并显示处理结果
+      if (pendingPermission && this.adapter.editMessage) {
+        const statusText = value === 'once' ? '✅ 已允许（一次）' :
+                          value === 'always' ? '✅ 已允许（总是）' :
+                          '❌ 已拒绝'
+        const updatedText = `**INSTANCE:** \`${pendingPermission.instanceId}\`\n**SESSION ID:** \`${pendingPermission.sessionId}\`\n\n🦀 **蟹老板请求权限：**\n\n${statusText}`
+        const result = markdownToEntities(updatedText)
+
+        await this.adapter.editMessage(pendingPermission.messageId, {
+          chatId: pendingPermission.chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+
+        // 从 pending 中移除
+        this.pendingPermissions.delete(requestId)
+      }
+    } catch (err) {
+      console.error('Error sending permission reply:', err)
+    }
+  }
+
+  // 处理选择组合
+  private async handleSelectCombo(
+    userId: string,
+    shortId: string,
+    callbackId: string,
+    chatId: number,
+    messageId?: string
+  ): Promise<void> {
+    // 从上下文中获取映射表
+    const goContext = this.goMessageContexts.get(userId)
+
+    if (!goContext || !goContext.comboMap) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '会话已过期，请重新输入 /go')
+      }
+      return
+    }
+
+    // 通过短ID查找组合
+    const combo = goContext.comboMap.get(shortId)
+
+    if (!combo) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '选择已失效')
+      }
+      return
+    }
+
+    const instanceId = combo.instanceId
+    const sessionId = combo.sessionId
+
+    // 检查实例是否仍然在线
+    const instance = this.registry.getInstance(instanceId)
+    if (!instance) {
+      if ('answerCallbackQuery' in this.adapter) {
+        await (this.adapter as any).answerCallbackQuery(callbackId, '实例已断开')
+      }
+
+      // 原地更新消息，显示错误
+      if (messageId && this.adapter.editMessage) {
+        const result = markdownToEntities('🚀 **快速切换**\n\n❌ 该实例已断开连接，请重新选择。')
+        await this.adapter.editMessage(messageId, {
+          chatId,
+          text: result.text,
+          parseMode: 'entities',
+          entities: result.entities
+        })
+      }
+      return
+    }
+
+    // 更新用户选择
+    this.registry.setUserInstance(userId, instanceId)
+    this.registry.setUserSession(userId, sessionId)
+
+    // 获取会话标题
+    const sessionTitle = await this.getSessionTitle(instanceId, sessionId)
+
+    // 更新最近组合记录（刷新时间和计数）
+    this.recordRecentCombo(userId, instanceId, combo.instanceName, sessionId, sessionTitle)
+
+    if ('answerCallbackQuery' in this.adapter) {
+      await (this.adapter as any).answerCallbackQuery(callbackId, '切换成功')
+    }
+
+    // 构建选中状态的消息（统一代码块格式）
+    const selectedText = `🚀 **快速切换**\n\n✅ **已选择**\n\n**INSTANCE:** \`${instanceId}\`\n**TITLE:** \`${sessionTitle}\`\n**SESSION ID:** \`${sessionId}\``
+
+    // 转换为 entities 格式
+    const result = markdownToEntities(selectedText)
+
+    // 原地更新消息
+    if (messageId && this.adapter.editMessage) {
+      await this.adapter.editMessage(messageId, {
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+    } else {
+      // 如果无法编辑，发送新消息
+      await this.sendMessage({
+        chatId,
+        text: result.text,
+        parseMode: 'entities',
+        entities: result.entities
+      })
+    }
   }
 
   // 处理 TUI 命令
