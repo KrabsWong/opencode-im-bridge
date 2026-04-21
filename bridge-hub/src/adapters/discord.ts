@@ -510,6 +510,8 @@ export class DiscordAdapter implements IMAdapter {
    * 发送消息（IMAdapter 接口实现）
    * 使用 Embed 发送，解决连续消息聚合难以区分的问题。
    * Discord Embed description 上限 4096 字符，超出时拆分为多个 embed。
+   * 
+   * 特别处理：将 Telegram entities 转换回 Markdown，保留代码块高亮
    */
   async sendMessage(message: IMOutgoingMessage): Promise<{ messageId: string }> {
     const threadId = this.chatIdToThread.get(message.chatId)
@@ -518,9 +520,16 @@ export class DiscordAdapter implements IMAdapter {
     }
     console.log(`[Discord] Sending message to thread ${threadId} (chatId: ${message.chatId}, length: ${message.text.length})`)
 
+    // 如果是 entities 模式，尝试转换回 Markdown 以保留代码高亮
+    let processedText = message.text
+    if (message.parseMode === 'entities' && message.entities) {
+      processedText = this.entitiesToMarkdown(message.text, message.entities)
+      console.log(`[Discord] Converted entities back to Markdown for code highlighting`)
+    }
+
     // Embed description 上限 4096，留 96 字符余量
     const MAX_EMBED_LENGTH = 4000
-    const chunks = this.splitMessage(message.text, MAX_EMBED_LENGTH)
+    const chunks = this.splitMessage(processedText, MAX_EMBED_LENGTH)
     let lastMessageId = ''
 
     for (let i = 0; i < chunks.length; i++) {
@@ -552,6 +561,69 @@ export class DiscordAdapter implements IMAdapter {
     }
 
     return { messageId: lastMessageId }
+  }
+
+  /**
+   * 将 Telegram entities 转换回 Markdown 格式
+   * 主要用于恢复代码块格式，让 Discord 能正确高亮
+   */
+  private entitiesToMarkdown(text: string, entities: any[]): string {
+    // 按 offset 降序排序，从后向前替换
+    const sortedEntities = [...entities].sort((a, b) => b.offset - a.offset)
+    
+    let result = text
+    
+    for (const entity of sortedEntities) {
+      const { type, offset, length, language } = entity
+      const content = result.substring(offset, offset + length)
+      
+      let replacement: string
+      switch (type) {
+        case 'pre':
+          // 代码块，恢复 ```language\ncode\n``` 格式
+          if (language) {
+            replacement = `
+\`\`\`${language}
+${content}
+\`\`\`
+`
+          } else {
+            replacement = `
+\`\`\`
+${content}
+\`\`\`
+`
+          }
+          break
+        case 'code':
+          // 行内代码
+          replacement = `\`${content}\``
+          break
+        case 'bold':
+          replacement = `**${content}**`
+          break
+        case 'italic':
+          replacement = `*${content}*`
+          break
+        case 'text_link':
+          replacement = `[${content}](${entity.url || ''})`
+          break
+        case 'strikethrough':
+          replacement = `~~${content}~~`
+          break
+        case 'blockquote':
+          // 引用块，每行前加 >
+          replacement = content.split('\n').map((line: string) => `> ${line}`).join('\n')
+          break
+        default:
+          // 未知类型，保持原样
+          replacement = content
+      }
+      
+      result = result.substring(0, offset) + replacement + result.substring(offset + length)
+    }
+    
+    return result
   }
 
   /**
