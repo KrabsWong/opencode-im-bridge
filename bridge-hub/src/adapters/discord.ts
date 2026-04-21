@@ -99,6 +99,7 @@ export class DiscordAdapter implements IMAdapter {
 
   private botToken: string
   private channelId: string
+  private guildId: string = ''
   private baseUrl = 'https://discord.com/api/v10'
   private running: boolean = false
   private messageHandlers: Array<(message: IMMessage) => void> = []
@@ -124,52 +125,131 @@ export class DiscordAdapter implements IMAdapter {
     if (!this.botToken || !this.channelId) {
       throw new Error('Discord adapter requires botToken and channelId')
     }
+
+    // 获取 guildId
+    await this.fetchGuildId()
+  }
+
+  /**
+   * 通过 channelId 获取 guildId
+   */
+  private async fetchGuildId(): Promise<void> {
+    try {
+      const channel = await this.fetchWithAuth<{ guild_id: string }>(`/channels/${this.channelId}`)
+      this.guildId = channel.guild_id
+      console.log(`[Discord] Fetched guildId: ${this.guildId} from channel ${this.channelId}`)
+    } catch (error) {
+      console.warn(`[Discord] Failed to fetch guildId:`, error)
+    }
   }
 
   /**
    * 获取或创建 Instance 对应的 Thread
-   * 注意：重启后内存映射丢失，会在同一会话中复用 Thread
+   * 通过 Guild API 查询活跃线程，按名称匹配
    */
   async getOrCreateThread(instanceId: string, instanceName: string): Promise<string> {
-    // 检查内存中是否已有映射（同一会话内复用）
+    const threadName = instanceName.split('/').pop() || instanceId
+
+    // 1. 检查内存中是否已有映射（同一会话内复用）
     const existing = this.instanceThreads.get(instanceId)
     if (existing) {
       console.log(`[Discord] Found existing mapping for ${instanceId}: thread ${existing.threadId}`)
       
       // 尝试访问 thread
       const thread = await this.getThread(existing.threadId)
-      if (thread) {
-        if (!thread.thread_metadata?.archived) {
-          // Thread 活跃，直接复用
-          existing.lastActivity = Date.now()
-          console.log(`[Discord] Reusing active thread for ${instanceId}: ${existing.threadId}`)
-          return existing.threadId
-        } else {
-          // Thread 已归档（超过7天未活动），尝试取消归档
-          console.log(`[Discord] Thread ${existing.threadId} is archived (7-day auto-archive), attempting to unarchive...`)
-          try {
-            await this.fetchWithAuth(`/channels/${existing.threadId}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ archived: false })
-            })
-            console.log(`[Discord] ✓ Successfully unarchived thread: ${existing.threadId}`)
-            existing.lastActivity = Date.now()
-            return existing.threadId
-          } catch (unarchiveError) {
-            console.warn(`[Discord] Failed to unarchive thread ${existing.threadId}, will create new one:`, unarchiveError)
-            this.instanceThreads.delete(instanceId)
-          }
-        }
-      } else {
-        // Thread 不存在（已删除）
-        console.log(`[Discord] Thread ${existing.threadId} no longer exists, will create new one`)
-        this.instanceThreads.delete(instanceId)
+      if (thread && !thread.thread_metadata?.archived) {
+        // Thread 活跃，直接复用
+        existing.lastActivity = Date.now()
+        console.log(`[Discord] Reusing active thread for ${instanceId}: ${existing.threadId}`)
+        return existing.threadId
       }
     }
 
-    // 创建新的 thread
-    console.log(`[Discord] Creating new thread for ${instanceId}`)
+    // 2. 通过 Guild API 查询活跃线程
+    if (this.guildId) {
+      const existingThreadId = await this.findThreadByName(threadName)
+      if (existingThreadId) {
+        console.log(`[Discord] Found existing thread by name "${threadName}": ${existingThreadId}`)
+        
+        // 创建映射
+        this.chatIdCounter++
+        const numberChatId = this.chatIdCounter
+        const mapping: ThreadMapping = {
+          instanceId,
+          threadId: existingThreadId,
+          channelId: this.channelId,
+          lastActivity: Date.now(),
+          numberChatId
+        }
+        this.instanceThreads.set(instanceId, mapping)
+        this.chatIdToThread.set(numberChatId, existingThreadId)
+        
+        // 重新加入 thread
+        try {
+          await this.fetchWithAuth(`/channels/${existingThreadId}/thread-members/@me`, {
+            method: 'PUT'
+          })
+          console.log(`[Discord] Re-joined thread ${existingThreadId}`)
+        } catch (joinError) {
+          console.warn(`[Discord] Failed to join thread:`, joinError)
+        }
+        
+        // 发送重新连接通知
+        try {
+          await this.fetchWithAuth(`/channels/${existingThreadId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({
+              content: `🟢 **Instance Reconnected**\n⏰ ${new Date().toLocaleString()}`
+            })
+          })
+        } catch (msgError) {
+          console.warn(`[Discord] Failed to send reconnection message:`, msgError)
+        }
+        
+        return existingThreadId
+      }
+    }
+
+    // 3. 创建新的 thread
+    console.log(`[Discord] No existing thread found for "${threadName}", creating new one`)
     return this.createThread(instanceId, instanceName)
+  }
+
+  /**
+   * 通过 Guild API 按名称查找 Thread
+   */
+  private async findThreadByName(threadName: string): Promise<string | undefined> {
+    if (!this.guildId) {
+      console.warn(`[Discord] No guildId available, cannot query threads`)
+      return undefined
+    }
+
+    try {
+      console.log(`[Discord] Querying active threads from guild ${this.guildId}...`)
+      
+      // 获取所有活跃线程
+      const response = await this.fetchWithAuth<{
+        threads: DiscordThread[]
+        members: any[]
+      }>(`/guilds/${this.guildId}/threads/active`)
+      
+      console.log(`[Discord] Found ${response.threads?.length || 0} active threads in guild`)
+      
+      // 查找匹配的 thread
+      for (const thread of response.threads || []) {
+        // 只找属于当前频道的 thread
+        if (thread.parent_id === this.channelId && thread.name === threadName) {
+          console.log(`[Discord] ✓ Found matching thread: ${thread.id} (name: "${thread.name}")`)
+          return thread.id
+        }
+      }
+      
+      console.log(`[Discord] ✗ No thread found with name "${threadName}" in channel ${this.channelId}`)
+    } catch (error) {
+      console.error(`[Discord] Failed to query guild threads:`, error)
+    }
+    
+    return undefined
   }
 
   /**
